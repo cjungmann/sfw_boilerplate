@@ -53,6 +53,10 @@ following steps should be executed:
 
 ## Usage
 
+- Install the boilerplate to begin a new project:
+
+  `git clone https://github.com/cjungmann/sfw_boilerplate.git sfw_newsite`
+
 - Create MySQL scripts, especially *tables.sql* in the protected
   directory.
 
