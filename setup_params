@@ -12,6 +12,9 @@
 DBASE="SFW_Boilerplate"        # (required) name of MySQL database
 SITE_TITLE="Boilerplate Title" # for <title> and <head> in default.xsl
 
+SITE_SESSION_TABLE="Session_Info"
+
+
 # Add to list of directories to be created in 'setup' script.
 # which otherwise includes "generated", "site", and "sql".
 
