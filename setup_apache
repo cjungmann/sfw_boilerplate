@@ -150,20 +150,24 @@ set_command_action()
 
 parse_cl_args()
 {
-    local state
-    local arg
-    for arg in "$@"; do
-        if [ "${arg:0:1}" = '-' ]; then
-            state="${arg:1:1}"
-        elif [ -n "$state" ]; then
-            case "$state" in
-                (a) set_command_action "$arg"; state= ;;
-                (i) SITE_INDEX="$arg"; state= ;;
-                (n) SITE_NAME="$arg"; state= ;;
-                (u) SITE_URL="$arg"; state= ;;
-            esac
-        fi
-    done
+    if [ $# -eq 1 ]; then
+        set_command_action "$1"
+    else
+        local state arg
+        for arg in "$@"; do
+            if [ "${arg:0:1}" = '-' ]; then
+                state="${arg:1:1}"
+            elif [ -n "$state" ]; then
+                case "$state" in
+                    (a) set_command_action "$arg"; state= ;;
+                    (i) SITE_INDEX="$arg"; state= ;;
+                    (n) SITE_NAME="$arg"; state= ;;
+                    (u) SITE_URL="$arg"; state= ;;
+                esac
+            fi
+        done
+    fi
+
 }
 
 declare etc_hosts_path="/etc/hosts"
@@ -200,8 +204,7 @@ add_to_etc_hosts()
         fi
     else
         echo "'hosts' already includes host name '${SITE_NAME}':"
-        grep -h "$name" "$etc_hosts_path"
-    fi
+   fi
 }
 
 remove_from_etc_hosts()
