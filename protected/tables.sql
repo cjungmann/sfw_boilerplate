@@ -1,0 +1,15 @@
+CREATE TABLE IF NOT EXISTS Item
+(
+   id     INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+   name   VARCHAR(40)
+);
+
+CREATE TABLE IF NOT EXISTS Person
+(
+   id     INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+   fname  VARCHAR(20),
+   lname  VARCHAR(30),
+   dob    DATE,
+   gender ENUM('female','male', 'other')
+);
+
