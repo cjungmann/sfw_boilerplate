@@ -9,8 +9,8 @@
 # the script needs to value to be set, not that it must be set here.
 
 # in 'setup' script
-DBASE="SFW_Starter"        # (required) name of MySQL database
-SITE_TITLE="Starter Title" # for <title> and <head> in default.xsl
+DBASE="SFW_Boilerplate"        # (required) name of MySQL database
+SITE_TITLE="Boilerplate Title" # for <title> and <head> in default.xsl
 
 # Add to list of directories to be created in 'setup' script.
 # which otherwise includes "generated", "site", and "sql".
@@ -21,16 +21,16 @@ SITE_TITLE="Starter Title" # for <title> and <head> in default.xsl
 
 
 # in 'setup_apache' script
-SITE_NAME="sfw_starter"    # (required) .conf name and backup hostname
+SITE_NAME="sfw_boilerplate" # (required) .conf name and backup hostname
 
-SITE_INDEX="Person.srm"    # DirectoryIndex value in .conf file.  If
-                           # missing, DirectoryIndex will be set to the
-                           # first SRM file in 'site' directory.
+SITE_INDEX="Person.srm" # DirectoryIndex value in .conf file.  If
+                        # missing, DirectoryIndex will be set to the
+                        # first SRM file in 'site' directory.
 
-SITE_URL=                  # ServerName value in .conf file.  If
-                           # missing, the ServerName will be set to
-                           # the value in the SITE_NAME variable above
-                           # AND the SITE_NAME will be added to the
-                           # /etc/hosts file to activate for localhost.
+SITE_URL=               # ServerName value in .conf file.  If
+                        # missing, the ServerName will be set to
+                        # the value in the SITE_NAME variable above
+                        # AND the SITE_NAME will be added to the
+                        # /etc/hosts file to activate for localhost.
           
 
