@@ -453,6 +453,10 @@ install()
         exit 1
     fi
 
+    if [ "${SITE_SESSION_TABLE}" ]; then
+        gensfw_session_procs "$DBASE" "${SITE_SESSION_TABLE}" > sql/01_session.sql
+    fi
+
     generate_scripts_from_tables
 
     if ! load_procedures_from_scripts; then
