@@ -57,6 +57,14 @@ following steps should be executed:
 
   `git clone https://github.com/cjungmann/sfw_boilerplate.git sfw_newsite`
 
+- Change to new directory:
+
+  `cd sfw_newsite`
+
+- Uninitialize *git* (assuming you're in sfw_newsite):
+
+  `rm -rf .git`
+
 - Create MySQL scripts, especially *tables.sql* in the protected
   directory.
 
