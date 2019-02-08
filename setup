@@ -11,14 +11,6 @@ declare -a DIR_LIST=(
 
 source "setup_params"
 
-declare DEF_CONF_FILE="
-<VirtualHost *:80>
-   DocumentRoot #root#
-   ServerName #name#
-   DirectoryIndex #index#
-</VirtualHost>
-"
-
 running_as_root() { [ "$USER" = "root" ]; }
 
 get_terminal_position()
