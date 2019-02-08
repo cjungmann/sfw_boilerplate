@@ -1,0 +1,492 @@
+#!/bin/bash
+
+declare DBASE SITE_TITLE
+
+# Define array before setup_params so setup_params can modify it:
+declare -a DIR_LIST=(
+        generated
+        site
+        sql
+)
+
+source "setup_params"
+
+declare DEF_CONF_FILE="
+<VirtualHost *:80>
+   DocumentRoot #root#
+   ServerName #name#
+   DirectoryIndex #index#
+</VirtualHost>
+"
+
+running_as_root() { [ "$USER" = "root" ]; }
+
+get_terminal_position()
+{
+    local POS
+    read -sdR -p $'[6n' POS
+    echo "${POS:1}"
+}
+
+set_terminal_position()
+{
+    local pos="$1"
+    echo $''"${pos}f"
+}
+
+remove_from_array()
+{
+    local needle="$1"
+    local hay
+    for hay in "${@:1}"; do
+        if [ "$hay" != "$needle" ]; then
+            echo "${hay}"
+        fi
+    done
+}
+
+database_exists()
+{
+    local -i count
+    local -a query=(
+        "SELECT COUNT(*)"
+        "FROM information_schema.SCHEMATA"
+        "WHERE SCHEMA_NAME='${DBASE}'"
+        )
+    count=$( mysql -BN -e "${query[*]}" )
+
+    [ $count -eq 1 ]
+}
+
+table_exists()
+{
+    local TNAME="$1"
+    local -i count
+    local -a query=(
+        "SELECT COUNT(*)"
+        "FROM information_schema.TABLES"
+        "WHERE TABLE_SCHEMA='${DBASE}'"
+        "AND TABLE_NAME='${TNAME}'"
+        )
+    count=$( mysql information_schema -BN -e "${query[*]}" )
+
+    [ $count -eq 1 ]
+}
+
+proc_exists()
+{
+    local PNAME="$1"
+    local -i count
+    local -a query=(
+        "SELECT COUNT(*)"
+        "FROM information_schema.ROUTINES"
+        "WHERE ROUTINE_SCHEMA='${DBASE}'"
+        "AND ROUTINE_NAME='${PNAME}'"
+        )
+    count=$( mysql information_schema -BN -e "${query[*]}" )
+
+    [ $count -eq 1 ]
+}
+
+ensure_database()
+{
+    if ! database_exists; then
+        echo "Creating database '${DBASE}'"
+        mysql -e "CREATE DATABASE ${DBASE}"
+        return $?
+    fi
+    return 0
+}
+
+get_setup_tables_from_scripts()
+{
+    local pwd="${PWD}"
+    cd sql
+
+    local table
+    local line
+    local -a lines
+    local -i count=0
+    local IFS=$'\n'
+    lines=( $( grep -h CREATE\ TABLE tables*.sql ) )
+    for line in "${lines[@]}"; do
+        if [[ "$line" =~ .*[[:space:]](.*)$ ]]; then
+            table="${BASH_REMATCH[1]}"
+            if table_exists "$table"; then
+                echo "${table}"
+            fi
+        fi
+    done
+
+    cd "$pwd"
+}
+
+get_setup_procedures_from_scripts()
+{
+    local pwd="${PWD}"
+    cd sql
+
+    local proc
+    local line
+    local -a lines
+    local -i count=0
+    local IFS=$'\n'
+    lines=( $( grep -h CREATE\ PROCEDURE * ) )
+    regexp='.*CREATE\ PROCEDURE[[:space:]+]([^\(]*).*$'
+    for line in "${lines[@]}"; do
+        if [[ "$line" =~ $regexp ]]; then
+            proc="${BASH_REMATCH[1]}"
+            if proc_exists "$proc"; then
+                echo "${proc}"
+            fi
+        fi
+    done
+
+    cd "$pwd"
+}
+
+get_app_tables_from_scripts()
+{
+    local -a gcmd=( -v -e ^Salt$ -e ^Session_Info$ )
+    get_setup_tables_from_scripts | grep "${gcmd[@]}" -
+}
+
+get_app_procedures_from_scripts()
+{
+    get_setup_procedures_from_scripts
+}
+
+get_table_srm_files() { ls -1 | grep -e \.srm - | grep -v autoload -; }
+
+remove_site_files()
+{
+    local pwd="${PWD}"
+    cd site
+    local -a gcmd=( -v -e ^includes$ )
+
+    local file
+    local -a files=( $( ls -1 | grep "${gcmd[@]}" - ) )
+    for file in "${files[@]}"; do
+        rm "$file"
+    done
+
+    cd "${pwd}"
+}
+
+# Uninstall function
+remove_tables_from_mysql()
+{
+    local table
+    local count=0
+    local -a tables=( $( get_app_tables_from_scripts ) )
+
+    for table in "${tables[@]}"; do
+        if table_exists "$table"; then
+            (( ++count ))
+            mysql "$DBASE" -e "DROP TABLE $table"
+        else
+            echo "Failed to find table '${table}'"
+        fi
+    done
+
+    echo "Finished removing $count tables."
+}
+
+# Uninstall function
+remove_procedures_from_mysql()
+{
+    local -a procs=( $( get_app_procedures_from_scripts ) )
+
+    local -i count=0
+    local proc
+    for proc in "${procs[@]}"; do
+        if proc_exists "$proc"; then
+            (( ++count ))
+            mysql "$DBASE" -e "DROP PROCEDURE $proc"
+        else
+            echo "Failed to find procedure '$proc'"
+        fi
+    done
+
+    echo "Finished removing $count procedures."
+}
+
+process_table()
+{
+    local table="$1"
+
+    local pwd="${PWD}"
+
+    local waitmsg="...please be patient"
+    local donemsg=".  Done             "
+    local failmsg=".  Failed           "
+    local -i waitlen="${#waitmsg}"
+
+    cd generated
+    echo -n "Generating ${table}.gsf${waitmsg}"
+    gensfw -d "$DBASE" -t "$table" -c save
+    local -i excode=$?
+
+    echo -n "[${waitlen}D"
+    if [ $excode -eq 0 ]; then
+        echo "${donemsg}"
+    else
+        echo "${failmsg}"
+    fi
+
+    cd "$pwd"
+    cd site
+    mv -f "../generated/${table}.srm" .
+
+    cd "$pwd"
+    cd sql
+    mv -f "../generated/${table}.sql" .
+
+    cd "$pwd"
+}
+
+ininstall_table()
+{
+    local pwd="${PWD}"
+    cd sql
+
+    local table="$1"
+    cd generated
+    rm '${table}.gsf'
+    cd ../site
+    rm '${table}.srm'
+    cd ../sql
+    rm '${table}.sql'
+    cd ../custom
+    rm '${table}.s*'
+
+    mysql "$DBASE" -e "DROP TABLE $1"
+
+    cd "$pwd"
+}
+
+# This function is called from setup_framework(),
+# which has already set the PWD to 'site'.
+fix_default_xsl()
+{
+    local new_title=${SITE_TITLE:-${DBASE} Project}
+
+    local -a xslparams=(
+        --stringparam title "${new_title}"
+        --stringparam compiled-xsl yes
+        --stringparam min-javascript yes
+        ../fix_default.xsl
+        default.xsl
+    )
+
+    # In 'site', stylesheet in parent directory:
+    local new_default=$( xsltproc "${xslparams[@]}" )
+    echo "${new_default}" > default.xsl
+}
+
+setup_framework()
+{
+    local pwd="${PWD}"
+    cd site
+
+    echo "directory 'site'"
+
+    local -i exval
+    
+    if ! proc_exists "ssys_clear_for_request"; then
+        echo "   Missing procedure 'ssys_clear_for_request', so we'll install the system procedures."
+        mysql -f "$DBASE" < /usr/local/lib/SchemaServer/install/sys_procs.sql
+        exval=$?
+        if [ $exval -ne 0 ]; then
+            echo "   SchemaServer MySQL system procedures failed to load (${exval})."
+        fi
+    fi
+
+    if ! [ -f default.xsl ]; then
+        echo "   Installing default.xsl"
+        cp /usr/local/lib/schemafw/default.xsl .
+        fix_default_xsl
+    else
+        echo "   Stylesheet default.xsl is already installed."
+    fi
+
+    if ! [ -d includes ]; then
+        echo "   Installing 'includes' directory"
+        ln -s /usr/local/lib/schemafw/web_includes includes
+    else
+        echo "   The 'includes' directory is already installed."
+    fi
+
+    echo
+
+    cd "$pwd"
+}
+
+prepare_directories()
+{
+    local dir
+
+    for dir in "${DIR_LIST[@]}"; do
+        if ! [ -d "$dir" ]; then
+            mkdir "$dir"
+        fi
+    done
+}
+
+copy_protected_scripts()
+{
+    local pwd="${PWD}"
+    cd sql
+
+    cp -fs ../protected/*.sql .
+
+    cd "$pwd"
+}
+
+load_tables_from_scripts()
+{
+    local pwd="${PWD}"
+    cd sql
+    
+    local -a files
+    local file
+    if ensure_database; then
+        files=( $( ls | grep ^tables.*\.sql ) )
+        echo "About to install ${#files[@]} tables scripts files." 
+        if [ $? -eq 0 ]; then
+            for file in "${files[@]}"; do
+                mysql "$DBASE" < "${file}"
+                if [ $? -ne 0 ]; then
+                    echo "Error loading script '${file}'"
+                    echo "Terminating setup"
+                    echo
+                    return 1
+                fi
+            done
+        fi
+    fi
+
+    cd "$pwd"
+
+    echo "Finished loading tables."
+}
+
+generate_scripts_from_tables()
+{
+    local -a APP_TABLES
+    APP_TABLES=( $( get_app_tables_from_scripts ) )
+    for table in "${APP_TABLES[@]}"; do
+        process_table "$table"
+    done
+}
+
+load_procedures_from_scripts()
+{
+    local pwd="${PWD}"
+    cd sql
+
+    local script
+    local -a scripts
+    local -i exval
+    # ls, one name per line, then use grep's invert-match to filter:
+    scripts=( $( ls -1 | grep -v table - ) )
+
+    for script in "${scripts[@]}"; do
+        echo -n "Loading MySQL script '${script}'."
+        mysql "$DBASE" < "${script}"
+        exval=$?
+        if [ $exval -eq 0 ]; then
+            echo "..success"
+        else
+            echo "..error"
+        fi
+    done
+
+    cd "$pwd"
+
+    return $exval
+}
+
+create_autoload()
+{
+    local target="autoload.srm"
+    local pwd="${PWD}"
+    cd site
+
+    function wrout()
+    { 
+        local str="$1"
+        local -i indent="${2:-0}"
+
+        local -i i
+        for (( i=0; i<$indent; ++i )); do
+            echo -n "   " >> "$target"
+        done
+            
+        echo "$str" >> "$target"
+     }
+
+    local srm label
+    local -a srms
+    srms=( $( get_table_srm_files ) )
+
+    # Clear the file ahead of file-appends
+    echo -n > "$target"
+
+    wrout "\$shared : autoload_page"
+    wrout "navigation" 1
+    
+    for srm in "${srms[@]}"; do
+        if [[ $srm =~ ([^.]+).srm ]]; then
+            label="${BASH_REMATCH[1]}"
+        else
+            label="$srm"
+        fi
+            
+        wrout "target"         2
+        wrout "label : $label" 3
+        wrout "url   : $srm"   3
+    done
+    
+    cd "$pwd"
+}
+
+install()
+{
+    prepare_directories
+    setup_framework
+    copy_protected_scripts
+
+    if ! load_tables_from_scripts; then
+        exit 1
+    fi
+
+    generate_scripts_from_tables
+
+    if ! load_procedures_from_scripts; then
+        exit 1
+    fi
+
+    create_autoload
+}
+
+uninstall()
+{
+    remove_procedures_from_mysql
+    remove_tables_from_mysql
+    remove_site_files
+    cd sql
+    rm *
+    cd ../generated
+    rm *
+    cd ..
+}
+
+
+if [ $# -lt 1 -o "$1" = "install" ]; then
+    install
+elif [ "$1" = "uninstall" ]; then
+    uninstall
+fi
+
+

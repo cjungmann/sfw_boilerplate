@@ -1,0 +1,15 @@
+#!/bin/bash
+
+declare -a DIR_LIST=(custom generated site sql)
+
+declare dirname
+declare -a farray
+for dirname in "${DIR_LIST[@]}"; do
+    if [ -d "$dirname" ]; then
+        farray=( $( ls "$dirname" ) )
+        if [ "${#farray[@]}" -gt 0 ]; then
+            rm "${dirname}"/*
+        fi
+        rmdir "${dirname}"
+    fi
+done

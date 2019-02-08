@@ -1,0 +1,3 @@
+This directory is mainly to host non-generated files,
+tables.sql in particular, that will not be deleted
+when cleaning up directories.

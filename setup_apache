@@ -1,0 +1,338 @@
+#!/bin/bash
+
+declare SITE_NAME=
+declare SITE_INDEX="index.htm"
+declare SITE_URL=
+
+source setup_params
+
+declare COMMAND_ACTION="install"
+
+declare CONF_FILE="
+<VirtualHost *:80>
+   DocumentRoot   #root#
+   ServerName     #name#
+   DirectoryIndex #index#
+</VirtualHost>
+"
+show_usage()
+{
+    local msg="
+The command, setup_apache, is a tool to simplify the
+process of setting up an Apache website by generating,
+and installing a configuration file
+
+setup_apache < -a Action > < -n Site Name >  [ -i Index File ] [ -u URL ]
+
+Options:
+a (required) Action to take (install or uninstall)
+n (required) Site Name (mywebsite).  This value will
+  be used for the configuration file name AND, if a
+  URL is not specified, the ServerName setting in the
+  configuration.
+i (optional) Index File name (index.html or something
+  similar).  If not specified, index.htm will be used
+  in its place.
+u (optional) URL is the WWW URL for the site, to be
+  used for the ServerName setting.  If this field is omitted,
+  the Site name value will be used in its place.
+
+For '-a install':
+If the command is run as root (sudo), it will generate, 
+install, and enable an Apache configuration file, then
+reload Apache.  If not running as root, the proposed
+configuration file contents will be displayed.
+
+Further, if running as root, and the '-u URL' parameter
+is empty, the value of '-n Site Name' value will be added
+to the /etc/hosts file
+
+For '-a uninstall', which must be run as root to have
+any effect, the site will be disabled (a2dissite), the
+configuration file removed from /etc/apache2/sites-available,
+and, if '-u URL' is not specified, the /etc/hosts file
+will be changed (upon user view of changes and approval)
+to remove the hostname as defined by '-n Site Name'.
+"
+
+    echo "$msg"
+}
+
+get_array_index_of()
+{
+    local needle="$1"
+    local haystack=( "${@:2}" )
+
+    local straw
+    local -i count=0
+    for straw in "${haystack[@]}"; do
+        if [ "$straw" = "$needle" ]; then
+            echo $count
+            return 0
+        else
+            (( ++count ))
+        fi
+    done
+
+    echo -1
+    return 0
+}
+
+remove_line_from_array()
+{
+    local needle="$1"
+    local haystack=( "${@:2}" )
+
+    local straw
+    for straw in "${haystack[@]}"; do
+        if ! [ "$straw" = "$needle" ]; then
+            echo "$straw"
+        fi
+    done
+}
+
+declare apath="/etc/apache2/sites-"
+
+# Boolean functions that assign names to tests:
+running_as_root() { [ "$USER" = "root" ]; }
+url_is_local()    { [ -z "${SITE_URL}" -a -n "${SITE_NAME}" ]; }
+site_available()  { ls "${apath}available" | grep -q ^"${SITE_NAME}.conf"$ -; }
+site_enabled()    { ls "${apath}enabled"   | grep -q ^"${SITE_NAME}.conf"$ -; }
+get_ok_no()
+{
+    local prompt="${1:-Make it so}"
+    local ok
+    while [ "$ok" != 'y' -a "$ok" != 'n' ]; do
+        read -p "${prompt} (y or n)? " ok
+    done
+
+    [ "$ok" = 'y' ]
+}
+ok_to_write_config_file()
+{
+    local path="$1"
+    local name
+    local IFS=/
+    local -a parts=( $path )
+    local -i ndx="${#parts[@]}"
+    if [ $ndx -gt 2 ]; then
+        (( --ndx ))
+        name="${parts[$ndx]}"
+    fi
+
+    if [ -f "$path" ]; then
+        echo "'$name' already exists, here it is:"
+        echo -n '[31m'
+        cat "${path}"
+        echo -n '[0m'
+        echo "For '$name', replace red text with green text."
+    fi
+
+    get_ok_no "Write new config file"
+}
+
+# Debugging function
+echo_settings()
+{
+    echo "SITE_INDEX = '${SITE_INDEX}'"
+    echo "SITE_NAME = '${SITE_NAME}'"
+    echo "SITE_URL = '${SITE_URL}'"
+}
+
+set_command_action()
+{
+    if [[ "$1" =~ install|uninstall ]]; then
+        COMMAND_ACTION="$1"
+    else
+        echo "Invalid action, must by 'install' or 'uninstall'" >&2
+    fi
+}
+
+parse_cl_args()
+{
+    local state
+    local arg
+    for arg in "$@"; do
+        if [ "${arg:0:1}" = '-' ]; then
+            state="${arg:1:1}"
+        elif [ -n "$state" ]; then
+            case "$state" in
+                (a) set_command_action "$arg"; state= ;;
+                (i) SITE_INDEX="$arg"; state= ;;
+                (n) SITE_NAME="$arg"; state= ;;
+                (u) SITE_URL="$arg"; state= ;;
+            esac
+        fi
+    done
+}
+
+declare etc_hosts_path="/etc/hosts"
+# declare etc_hosts_path="fake_hosts"
+
+get_localhost_address()
+{
+    local line=$( grep -h "localhost$" "$etc_hosts_path" )
+    local ipre=\([[:digit:]]\{1,3\}\\.\)\{3\}[[:digit:]]\{1,3\}
+
+    if [ -n "$line" ]; then
+        if [[ "$line" =~ $ipre ]]; then
+            echo "${BASH_REMATCH[0]}"
+        fi
+    fi
+}
+
+name_in_etc_hosts()
+{
+    local name="$1"
+    local line=$( grep -h "$name" "$etc_hosts_path" )
+    [ -n "$line" ]
+}
+
+add_to_etc_hosts()
+{
+    local newhosts
+    local lhost=$( get_localhost_address )
+    if ! name_in_etc_hosts "${SITE_NAME}"; then
+        if get_ok_no "Add '${SITE_NAME}' to $etc_hosts_path"; then
+            cp "$etc_hosts_path" /tmp/$( date -Iseconds)"_hosts_backup"
+            newhosts=$( echo "$lhost  ${SITE_NAME}" | cat "$etc_hosts_path" - )
+            echo "${newhosts}" > "$etc_hosts_path"
+        fi
+    else
+        echo "'hosts' already includes host name '${SITE_NAME}':"
+        grep -h "$name" "$etc_hosts_path"
+    fi
+}
+
+remove_from_etc_hosts()
+{
+    if name_in_etc_hosts "${SITE_NAME}"; then
+        local match=$( grep -h "${SITE_NAME}" "$etc_hosts_path" )
+        local line
+        local -a lines newlines
+        local -i pos ndx
+
+        # Make lines array from /etc/hosts, including blank lines:
+        while read -s line; do
+            lines+=("$line")
+        done < "$etc_hosts_path"
+
+        pos=$( get_array_index_of "$match" "${lines[@]}" )
+        if [ $? -eq 0 ]; then
+            echo -n '[32m'
+            ndx=0
+            for line in "${lines[@]}"; do
+                if [ $ndx -eq $pos ]; then
+                    echo -n '[31m'
+                    echo "  > > > '$line'"
+                    echo -n '[32m'
+                else
+                    newlines+=("$line")
+                    echo "$line"
+                fi
+                (( ++ndx ))
+            done
+            echo -n '[0m'
+
+            if get_ok_no "(Red line to be deleted) Save changes"; then
+                cp "$etc_hosts_path" /tmp/$( date -Iseconds)"_hosts_backup"
+                printf "%s\n" "${newlines[@]}" > "$etc_hosts_path"
+            fi
+        fi
+    fi
+}
+
+install_config()
+{
+    local pwd="$PWD"
+    cd site
+
+    local path="/etc/apache2/sites-available/${SITE_NAME}.conf"
+    local name="${SITE_URL:-${SITE_NAME}}"
+    local index="${SITE_INDEX}"
+    local root="${PWD}"
+    
+    local -a sedargs=(
+        -e "s|#root#|${root}|"
+        -e "s|#name#|${name}|"
+        -e "s|#index#|${index}|"
+    )
+
+    local confcont=$( echo "${CONF_FILE}" | sed "${sedargs[@]}" - )
+
+    echo "The new generated configuration file is:"
+    echo -n '[32m'
+    echo "${confcont}"
+    echo '[0m'
+
+    if running_as_root; then
+        if ok_to_write_config_file "$path"; then
+            echo "Writing configuration to '${path}'"
+            echo "${confcont}" > "${path}"
+            echo
+            echo "Enabling the new configuration"
+            if a2ensite -q "${SITE_NAME}"; then
+                service apache2 reload
+            fi
+
+            return 0
+        fi
+    else
+        echo "Not running as root: No action taken."
+    fi
+
+    return 1
+}
+
+uninstall_config()
+{
+    if site_enabled; then
+        if a2dissite -q "${SITE_NAME}"; then
+            service apache2 reload
+        fi
+    fi
+    if site_available; then
+        rm "/etc/apache2/sites-available/${SITE_NAME}.conf"
+    else
+        echo "'${SITE_NAME}' was not installed.  No changes made."
+    fi
+}
+
+process_action()
+{
+    case "$COMMAND_ACTION" in
+        (install)
+            echo "Installing"
+            if install_config; then
+                if url_is_local; then
+                    add_to_etc_hosts
+                fi
+            fi
+            ;;
+        (uninstall)
+            echo "UNInstalling"
+            if running_as_root; then
+                if url_is_local; then
+                    remove_from_etc_hosts
+                fi
+                uninstall_config
+            else
+                echo "Must run as root (sudo) to uninstall"
+            fi
+            ;;
+    esac
+}
+    
+
+parse_cl_args "$@"
+
+if [ -z "${SITE_NAME}" ]; then
+    echo "Failed to provide a site name"
+    show_usage
+else
+    echo
+    process_action
+fi
+
+echo
+
