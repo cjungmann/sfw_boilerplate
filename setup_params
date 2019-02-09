@@ -11,6 +11,8 @@
 # in 'setup' script
 DBASE="SFW_Boilerplate"        # (required) name of MySQL database
 SITE_TITLE="Boilerplate Title" # for <title> and <head> in default.xsl
+SITE_DEBUG=1                   # Use debugging versions of XSL
+                               # stylesheets and Javascript files.
 
 SITE_SESSION_TABLE="Session_Info"
 
