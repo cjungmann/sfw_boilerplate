@@ -1,6 +1,7 @@
 #!/bin/bash
 
 declare DBASE SITE_TITLE
+declare -i SITE_DEBUG=0
 
 # Define array before setup_params so setup_params can modify it:
 declare -a DIR_LIST=(
@@ -12,6 +13,7 @@ declare -a DIR_LIST=(
 source "setup_params"
 
 running_as_root() { [ "$USER" = "root" ]; }
+use_debug()       { [ "${SITE_DEBUG}" -ne 0 ]; }
 
 get_terminal_position()
 {
@@ -265,11 +267,20 @@ fix_default_xsl()
 
     local -a xslparams=(
         --stringparam title "${new_title}"
-        --stringparam compiled-xsl yes
-        --stringparam min-javascript yes
-        ../fix_default.xsl
-        default.xsl
     )
+
+    if ! use_debug ; then
+        echo "Setting production mode parameters"
+        xslparams=( "${xslparams[@]}"
+                    --stringparam compiled-xsl yes
+                    --stringparam min-javascript yes
+                  )
+    fi
+
+    xslparams=( "${xslparams[@]}"
+                ../fix_default.xsl
+                default.xsl
+              )
 
     # In 'site', stylesheet in parent directory:
     local new_default=$( xsltproc "${xslparams[@]}" )
