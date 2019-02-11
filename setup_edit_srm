@@ -1,0 +1,210 @@
+#!/bin/bash
+
+declare RE_SRM_LINE='^([[:space:]]*)([^[:space:]#].*)[[:space:]]*$'
+declare RE_STRING_TRIM='^[[:space:]]*(.*[^[:space:]])[[:space:]]*$'
+
+is_srm_comment() { [[ "$1" =~ $\\s*# ]]; }
+in_range() { local -i ndx="$1"; [ "$ndx" -lt "${SRMLINES_COUNT}" ]; }
+srm_level()
+{
+    if [[ "$1" =~ $RE_SRM_LINE ]]; then
+        echo "${#BASH_REMATCH[1]}"
+    else
+        echo -1
+    fi
+}
+
+is_srm()
+{
+    local path="$1"
+    local ext=
+    local IFS=$'.'
+    local -a pathparts
+    local -i partcount
+    if [ -f "$path" ]; then
+        pathparts=( $( echo "$path" ) )
+        partcount="${#pathparts[@]}"
+        if [ $partcount -gt 1 ]; then
+            ext="${pathparts[ $(( partcount-1)) ]}"
+            if [ "$ext" = "srm" ]; then
+                return 0
+            fi
+        fi
+    fi
+    return 1
+}
+
+# Get current or first following non-comment line whose
+# level is greater than gtlevel (greater-than-level).
+self_or_next_inst_line()
+{
+    local -i start="${1:-0}"
+    local -i gtlevel="${2:--1}"
+    local -i i level
+
+    for (( i="$start"; i<"${SRMLINES_COUNT}"; ++i )); do
+        level=$( srm_level "${SRMLINES[$1]}" )
+        if [ "$level" -gt "$gtlevel" ]; then
+            echo "$i"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+get_child_level()
+{
+    local -i index="$1"
+    local -i level
+    local -i stop_level=$( srm_level "${SRMLINES[$start]}" )
+    while in_range "$(( ++index ))"; do
+        if [[ "${SRMLINES[$index]}" =~ $RE_SRM_LINE ]]; then
+            level="${#BASH_REMATCH[1]}"
+            if [ "$level" -eq "$stop_level" ]; then
+                return 1
+            elif [ "$level" -gt "$stop_level" ]; then
+                echo "$level"
+                return 0
+            fi
+        fi
+    done
+
+    return 1
+}
+
+string_trim()
+{
+    if [[ "$1" =~ $RE_STRING_TRIM ]]; then
+        echo "${BASH_REMATCH[1]}"
+    else
+        echo "$1"
+    fi
+}
+
+matches_step()
+{
+    local step="$1"
+    local line="$2"
+    local -a parts
+
+    local IFS=$':'
+    parts=( $( echo "$line" ) )
+
+    local val
+    local tag=$( string_trim "${parts[0]}" )
+    if [ "${#parts[@]}" -gt 1 ]; then
+        # Val may include colons, so repack remaining array:
+        val="${parts[@]:1}"
+        val=$( string_trim "${val[*]}" )
+    fi
+
+    [ "$step" = "${tag}" ]
+}
+
+
+# start must always refer to a non-comment line
+find_srm_line()
+{
+    local step="$1"
+    local -i start="$2"
+
+    # First step needs target_level=0 to find mode lines,
+    # Otherwise, the target_level is the level of the
+    # first child under the starting line:
+    local -i terminate_level=-1
+    local -i target_level=0
+    if [ "$start" -ge 0 ]; then
+        terminate_level=$( srm_level "${SRMLINES[$start]}" )
+        target_level=$( get_child_level "$start" )
+    fi
+
+    local line spaces instruction
+
+    local -i level
+    local -i index="$start"
+    while in_range "$(( ++index ))"; do
+        if [[ "${SRMLINES[$index]}" =~ $RE_SRM_LINE ]]; then
+            level="${#BASH_REMATCH[1]}"
+            if [ "$level" -le "$terminate_level" ]; then
+                break
+            elif [ "$level" -gt "$target_level" ]; then
+                continue
+            elif [ "$level" -eq "$target_level" ]; then
+                if matches_step "$step" "${BASH_REMATCH[2]}"; then
+                    echo "$index"
+                    return 0
+                fi
+            fi
+        fi
+    done
+
+    read -p "Press ENTER to continue."
+
+    return 1
+}
+
+
+find_branch()
+{
+    local path="$1"
+    local -i starting_srm_line="${2:--1}"
+    local -i found_srm_line
+
+    local -a pparts
+    local IFS='/'
+    pparts=( $( echo "$path" ) )
+    local step="${pparts[0]}"
+
+    echo -n "Starting at '$starting_srm_line', seeking '$step' " >&2
+
+    found_srm_line=$( find_srm_line "$step" $starting_srm_line )
+    if [ $? -eq 0 ]; then
+        echo "found at '$found_srm_line'" >&2
+        if [ $found_srm_line -ge 0 ]; then
+            if [ "${#pparts[@]}" -gt 1 ]; then
+                local -a subarr="${pparts[@]:1}"
+                find_branch "${subarr[*]}" $found_srm_line
+            else
+                echo $found_srm_line
+            fi
+        fi
+    else
+        echo "failed to find" >&2
+    fi
+
+}
+
+open_file()
+{
+    local file="$1"
+    local branch="$2"
+    local action="$3"
+
+    local OIFS="${IFS}"
+    local IFS=$'\n'
+    local line;
+
+    if is_srm "$file"; then
+
+        echo "Opening file '$file'" >&2
+
+        # Get contents into an array:
+        local -a SRMLINES
+        while read -s line; do
+            SRMLINES+=( "$line" )
+        done  < "$file"
+
+        # Get upper index limit:
+        local -i SRMLINES_COUNT="${#SRMLINES[@]}"
+
+        local -i branch_line
+        branch_line=$( find_branch "${branch}" )
+    fi
+}
+
+open_file "$1" "$2" "$3"
+
+
+
+
