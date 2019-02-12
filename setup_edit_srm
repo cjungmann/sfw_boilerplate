@@ -1,7 +1,8 @@
 #!/bin/bash
 
-declare RE_SRM_LINE='^([[:space:]]*)([^[:space:]#].*)[[:space:]]*$'
+declare RE_SRM_LINE='^([[:space:]]*)([^[:space:]#].*)[#[:space:]]*.*$'
 declare RE_STRING_TRIM='^[[:space:]]*(.*[^[:space:]])[[:space:]]*$'
+declare RE_NODE_TEST="^(([^:]+)(:[^[:space:]\[]+)?)(\[.*)?"
 
 is_srm_comment() { [[ "$1" =~ $\\s*# ]]; }
 in_range() { local -i ndx="$1"; [ "$ndx" -lt "${SRMLINES_COUNT}" ]; }
@@ -82,26 +83,55 @@ string_trim()
     fi
 }
 
+matches_predicate()
+{
+    local predicate="$1"
+    local -i line
+    
+}
+
 matches_step()
 {
-    local step="$1"
-    local line="$2"
-    local -a parts
+    local IFS OIFS="${IFS}"
 
-    local IFS=$':'
-    parts=( $( echo "$line" ) )
+    # Argument #1, search path 'step'
+    # Break the step into a node_test and zero-or-more predicates:
+    local step="$1"
+    local -a node_test
+    local predicate
+
+    if [[ "$step" =~ $RE_NODE_TEST ]]; then
+        IFS=$':'
+        node_test=( $( echo "${BASH_REMATCH[1]}" ) )
+        predicate="$BASH_REMATCH[4]}"
+    fi
+
+    # Argument #2, trimmed instruction line.
+    # Break into parts for comparison to current line:
+    local line="$2"
+    local -a line_parts
+    IFS=$':'
+    line_parts=( $( echo "$line" ) )
 
     local val
-    local tag=$( string_trim "${parts[0]}" )
-    if [ "${#parts[@]}" -gt 1 ]; then
+    local tag=$( string_trim "${line_parts[0]}" )
+    if [ "${#line_parts[@]}" -gt 1 ]; then
         # Val may include colons, so repack remaining array:
-        val="${parts[@]:1}"
+        val="${line_parts[@]:1}"
         val=$( string_trim "${val[*]}" )
     fi
 
-    [ "$step" = "${tag}" ]
-}
+    # Argument #3
+    local -i line="$3"
 
+    matches_tag_val() { [ "$tag" = "${node_test[0]}" ] && ( [ "${#node_test[@]}" -lt 1 ] || [ "${node_test[1]}" = "$val" ] ); }
+
+    if matches_tag_val && matches_predicate; then
+        return 0
+    fi
+
+    return 1
+}
 
 # start must always refer to a non-comment line
 find_srm_line()
@@ -131,15 +161,13 @@ find_srm_line()
             elif [ "$level" -gt "$target_level" ]; then
                 continue
             elif [ "$level" -eq "$target_level" ]; then
-                if matches_step "$step" "${BASH_REMATCH[2]}"; then
+                if matches_step "$step" "${BASH_REMATCH[2]}" "${index}"; then
                     echo "$index"
                     return 0
                 fi
             fi
         fi
     done
-
-    read -p "Press ENTER to continue."
 
     return 1
 }
@@ -156,7 +184,7 @@ find_branch()
     pparts=( $( echo "$path" ) )
     local step="${pparts[0]}"
 
-    echo -n "Starting at '$starting_srm_line', seeking '$step' " >&2
+    echo "Starting at '$starting_srm_line', seeking '$step' " >&2
 
     found_srm_line=$( find_srm_line "$step" $starting_srm_line )
     if [ $? -eq 0 ]; then
