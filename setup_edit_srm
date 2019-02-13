@@ -534,7 +534,6 @@ DO_sibling-before()
 
 DO_sibling-after()
 {
-    echo "Executing function DO_sibling-after" >&2
     local IFS=$'\n'
     local -i index="$1"
     local -i level last_line
@@ -542,7 +541,6 @@ DO_sibling-after()
         if last_line=$( find_branch_last_line "$index" ); then
             SRMLINES=( $( SRM_splice "$last_line" 0 "${@:2}" ) )
             SRMLINES_COUNT="${#SRMLINES[@]}"
-            echo "New SRMLINES count is $SRMLINES_COUNT" >&2
         fi
     fi
 
@@ -584,6 +582,7 @@ process_action()
 }
 
 if read_srm_file "$1"; then
+    echo "New SRMLINES count is $SRMLINES_COUNT" >&2
     for arg in "${@:2}"; do
         if [ "$P_FAILED_STATE" ]; then
             # Discard parameters for this action, but allow
