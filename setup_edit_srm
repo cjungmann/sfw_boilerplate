@@ -1,20 +1,23 @@
 #!/bin/bash
 
+declare -a SRMLINES
+declare -i SRMLINES_COUNT
+
 declare RE_SRM_LINE='^([[:space:]]*)([^[:space:]#].*)[#[:space:]]*.*$'
 declare RE_STRING_TRIM='^[[:space:]]*(.*[^[:space:]])[[:space:]]*$'
-declare RE_NODE_TEST="^(([^:]+)(:[^[:space:]\[]+)?)(\[.*)?"
+declare RE_NODE_TEST="^(([^:\[]+)(:[^[:space:]\[]+)?)(\[.*)?"
 
+# The first functions return no data (no echo to stdout (1)),
+# but return 0 or 1 to be suitable for use with a conditional
+# statement:
+#    in_range
+#    is_srm_comment
+#    is_srm
+#    matches_predicate
+#    matches_step
+
+in_range() { local -i ndx="$1"; [ "$ndx" -lt "${SRMLINES_COUNT}" -a "$ndx" -ge 0 ]; }
 is_srm_comment() { [[ "$1" =~ $\\s*# ]]; }
-in_range() { local -i ndx="$1"; [ "$ndx" -lt "${SRMLINES_COUNT}" ]; }
-srm_level()
-{
-    if [[ "$1" =~ $RE_SRM_LINE ]]; then
-        echo "${#BASH_REMATCH[1]}"
-    else
-        echo -1
-    fi
-}
-
 is_srm()
 {
     local path="$1"
@@ -35,61 +38,86 @@ is_srm()
     return 1
 }
 
-# Get current or first following non-comment line whose
-# level is greater than gtlevel (greater-than-level).
-self_or_next_inst_line()
-{
-    local -i start="${1:-0}"
-    local -i gtlevel="${2:--1}"
-    local -i i level
-
-    for (( i="$start"; i<"${SRMLINES_COUNT}"; ++i )); do
-        level=$( srm_level "${SRMLINES[$1]}" )
-        if [ "$level" -gt "$gtlevel" ]; then
-            echo "$i"
-            return 0
-        fi
-    done
-
-    return 1
-}
-
-get_child_level()
-{
-    local -i index="$1"
-    local -i level
-    local -i stop_level=$( srm_level "${SRMLINES[$start]}" )
-    while in_range "$(( ++index ))"; do
-        if [[ "${SRMLINES[$index]}" =~ $RE_SRM_LINE ]]; then
-            level="${#BASH_REMATCH[1]}"
-            if [ "$level" -eq "$stop_level" ]; then
-                return 1
-            elif [ "$level" -gt "$stop_level" ]; then
-                echo "$level"
-                return 0
-            fi
-        fi
-    done
-
-    return 1
-}
-
-string_trim()
-{
-    if [[ "$1" =~ $RE_STRING_TRIM ]]; then
-        echo "${BASH_REMATCH[1]}"
-    else
-        echo "$1"
-    fi
-}
-
+# Checks for and, if found, evaluates the predicate part of
+# a search step.  That is, the expressions enclosed in square
+# braces following a node_test, ie 'edit/schema/field[readOnly]'
+#
+# This function initiates recursion to validate the predicate
+# expressions, which may also contain predicates.  However,
+# this function never produces output, but should only be used
+# as a conditional statement to identify a matching line.
 matches_predicate()
 {
+    if [ -z "$1" ]; then
+        return 0
+    fi
+
     local predicate="$1"
-    local -i line
-    
+
+    local -i matched_line="$2"
+
+    local -i predlen="${#predicate}"
+    local -a pchars
+    local cchar
+    local -i nesting=0
+    local IFS=''
+
+    local expression
+    local -a expressions
+
+    has_chars() { [ "${#pchars[@]}" -gt 0 ]; }
+
+    # Collect predicate expressions from predicate:
+    local -i index=-1
+    local -i brace=1
+    while [ "$(( ++index ))" -lt "${predlen}" ]; do
+        cchar="${predicate:$index:1}"
+        brace=1
+        case "$cchar" in
+            \[) (( ++nesting )); brace=0 ;;
+            \]) (( --nesting )); brace=0 ;;
+        esac
+
+        if [ $brace -eq 0 ]; then
+            if has_chars; then
+                if [ $nesting -eq 0  ] && has_chars; then
+                    expressions+=( $( echo "${pchars[*]}" ) )
+                    pchars=
+                elif [ $nesting -lt 0 ] && has_chars; then
+                    break
+                fi
+            fi
+        else
+            pchars+=( "$cchar" )
+        fi
+
+    done
+
+    if [ $nesting -ne 0 ]; then
+        echo "ERROR: mismatched square braces" >&2
+        return 1
+    fi
+
+    local -i ignored_line_number
+    for expression in "${expressions[@]}"; do
+        ignored_line_number=$( find_srm_line "$expression" "$matched_line" )
+        if [ $? -ne 0 ]; then
+            return 1
+        fi
+    done
+
+    return 0
 }
 
+# This function parses the step into the node_test and optional
+# predicate expressions.  It validates the node_test, then
+# delegates predicate processing to matches_predicate().
+#
+# A conditional function, it produces no output and is to be
+# used in a conditional statement like:
+# if matches_step "$step" "$line" "$index_of_line"; then
+#    .
+# fi
 matches_step()
 {
     local IFS OIFS="${IFS}"
@@ -103,37 +131,123 @@ matches_step()
     if [[ "$step" =~ $RE_NODE_TEST ]]; then
         IFS=$':'
         node_test=( $( echo "${BASH_REMATCH[1]}" ) )
-        predicate="$BASH_REMATCH[4]}"
+        predicate="${BASH_REMATCH[4]}"
     fi
 
     # Argument #2, trimmed instruction line.
     # Break into parts for comparison to current line:
-    local line="$2"
+    local iline="$2"
     local -a line_parts
     IFS=$':'
-    line_parts=( $( echo "$line" ) )
+    line_parts=( $( echo "$iline" ) )
 
     local val
-    local tag=$( string_trim "${line_parts[0]}" )
+    local tag=$( trim_string "${line_parts[0]}" )
     if [ "${#line_parts[@]}" -gt 1 ]; then
         # Val may include colons, so repack remaining array:
         val="${line_parts[@]:1}"
-        val=$( string_trim "${val[*]}" )
+        val=$( trim_string "${val[*]}" )
     fi
 
     # Argument #3
-    local -i line="$3"
+    local -i srmline="$3"
 
     matches_tag_val() { [ "$tag" = "${node_test[0]}" ] && ( [ "${#node_test[@]}" -lt 1 ] || [ "${node_test[1]}" = "$val" ] ); }
 
-    if matches_tag_val && matches_predicate; then
-        return 0
+    if matches_tag_val; then
+        if matches_predicate "$predicate" $"srmline"; then
+            return 0
+        fi
     fi
 
     return 1
 }
 
-# start must always refer to a non-comment line
+# Remove leading and trailing spaces from text in $1
+trim_string()
+{
+    if [[ "$1" =~ $RE_STRING_TRIM ]]; then
+        echo "${BASH_REMATCH[1]}"
+    else
+        echo "$1"
+    fi
+}
+
+make_spaces()
+{
+    local -i i
+    for i in `seq 1 $1`; do
+        printf ' '
+    done
+}
+
+
+# Returns the count of leading white-space characters
+# in a text string.  This value represents the 'level.'
+# 
+# This also serves as a conditional function.  A non-SRM
+# line will return false (1).
+line_level()
+{
+    if [[ "$1" =~ $RE_SRM_LINE ]]; then
+        echo "${#BASH_REMATCH[1]}"
+        return 0
+    else
+        return 1
+    fi
+}
+
+srm_level()
+{
+    local -i index="$1"
+    if in_range "$index"; then
+        line_level "${SRMLINES[$index]}"
+    else
+        echo "Index $index is out-of-range for list of $SRMLINES_COUNT lines." >&2
+        return 1
+    fi
+}
+
+# Returns the level of the first child line, that is
+# the first non-comment line whose level (as determined
+# by srm_level()) is greater than the line from which
+# the search began.
+#
+# The returned value is then used to filter a line
+# search to ignore second or later generation offspring
+# and to terminate a lines scan.
+#
+# This function returns 1 if no child is found, so it
+# can be used as a conditional statement as well as for
+# its output.
+get_child_level()
+{
+    local -i index="$1"
+    local -i level
+    local -i stop_level=$( srm_level "$start" )
+    while in_range "$(( ++index ))"; do
+        if [[ "${SRMLINES[$index]}" =~ $RE_SRM_LINE ]]; then
+            level="${#BASH_REMATCH[1]}"
+            if [ "$level" -le "$stop_level" ]; then
+                return 1
+            elif [ "$level" -gt "$stop_level" ]; then
+                echo "$level"
+                return 0
+            fi
+        fi
+    done
+
+    return 1
+}
+
+
+# Given a path 'step' and a starting line, this function
+# returns the index number (into SRMLINES array) of the
+# FIRST ONLY line that matches the 'step'.
+#
+# This function returns 1 if no line is found, so it can
+# be used as a conditional statement as well as for its
+# output.
 find_srm_line()
 {
     local step="$1"
@@ -145,7 +259,7 @@ find_srm_line()
     local -i terminate_level=-1
     local -i target_level=0
     if [ "$start" -ge 0 ]; then
-        terminate_level=$( srm_level "${SRMLINES[$start]}" )
+        terminate_level=$( srm_level "$start" )
         target_level=$( get_child_level "$start" )
     fi
 
@@ -156,23 +270,101 @@ find_srm_line()
     while in_range "$(( ++index ))"; do
         if [[ "${SRMLINES[$index]}" =~ $RE_SRM_LINE ]]; then
             level="${#BASH_REMATCH[1]}"
-            if [ "$level" -le "$terminate_level" ]; then
-                break
-            elif [ "$level" -gt "$target_level" ]; then
-                continue
-            elif [ "$level" -eq "$target_level" ]; then
+            if [ "$level" -eq "$target_level" ]; then
                 if matches_step "$step" "${BASH_REMATCH[2]}" "${index}"; then
                     echo "$index"
                     return 0
                 fi
+            elif [ "$level" -le "$terminate_level" ]; then
+                return 1
+            elif [ "$level" -gt "$target_level" ]; then
+                continue
+            fi
+        fi
+    done
+    return 1
+}
+
+get_child_indices()
+{
+    local -i index="$1"
+    local -i clevel plevel tlevel
+
+    plevel=$( srm_level "$index" )
+
+    while in_range $(( ++index )); do
+        if tlevel=$( srm_level "$index" ); then
+            if [ "$tlevel" -gt "$plevel" ]; then
+                if [ -z "$clevel" ]; then
+                    clevel="$tlevel"
+                    echo "$index"
+                elif [ "$tlevel" -eq "$clevel" ]; then
+                    echo "$index"
+                elif [ "$tlevel" -lt "$clevel" ]; then
+                    # There should not be any levels
+                    # between the child and the parent.
+                    echo "Levels messed up." >&2
+                fi
+            else
+                break
             fi
         fi
     done
 
-    return 1
+    [ -n "$clevel" ]
+}
+
+# Prints a branch and its offspring, using recursion
+# to produce indenting.
+print_branch()
+{
+    local -i index="$1"
+    local -i indent="${2:-0}"
+
+    local spaces=$( make_spaces $indent )
+
+    local line="${SRMLINES[$index]}"
+
+    if [[ "$line" =~ $RE_SRM_LINE ]]; then
+        # print current line,
+        local instruction="${BASH_REMATCH[2]}"
+        echo "${spaces}$instruction"
+
+        carray=( $( get_child_indices "$index" ) )
+
+        local -i cindex
+        for cindex in "${carray[@]}"; do
+            print_branch "$cindex" $(( indent+3 ))
+        done
+    else
+        echo -n "'$spaces'"
+        trim_string "$line"
+    fi
+}
+
+print_srm()
+{
+    local -i index=-1
+    local -i level
+    while in_range $(( ++index )); do
+        level=$( srm_level "$index" )
+        if [ $? -eq 0 ]; then
+            if [ "$level" -eq 0 ]; then
+                print_branch "$index"
+            fi
+        else
+            # If not an SRM line, it is a comment or empty line,
+            # which will be preserved in the output file:
+            echo "${SRMLINES[$index]}"
+        fi
+    done
 }
 
 
+
+
+# This function searches the entire SRMLINES array to find
+# the SRMLINES line index that satisfies the 'path' value.
 find_branch()
 {
     local path="$1"
@@ -184,11 +376,8 @@ find_branch()
     pparts=( $( echo "$path" ) )
     local step="${pparts[0]}"
 
-    echo "Starting at '$starting_srm_line', seeking '$step' " >&2
-
     found_srm_line=$( find_srm_line "$step" $starting_srm_line )
     if [ $? -eq 0 ]; then
-        echo "found at '$found_srm_line'" >&2
         if [ $found_srm_line -ge 0 ]; then
             if [ "${#pparts[@]}" -gt 1 ]; then
                 local -a subarr="${pparts[@]:1}"
@@ -197,16 +386,84 @@ find_branch()
                 echo $found_srm_line
             fi
         fi
-    else
-        echo "failed to find" >&2
+    fi
+}
+
+find_parent()
+{
+    local -i ref_index="$1"
+    local -i ref_level=$( srm_level "$ref_index" )
+    if [ "$ref_level" -eq 0 ]; then
+        echo "-1"
+        return 0
     fi
 
+    local -i level
+    for index in `seq $1 0 -1`; do
+        level=$( srm_level "$index" )
+        if [ "$level" -lt "$ref_level" ]; then
+            echo "$index"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# When appending content after a branch, it must go
+# after the last element in the branch.  This function
+# finds the line after which an append can be placed.
+find_branch_last_line()
+{
+    local -i index="$1"
+
+    if ! in_range "$index"; then
+        echo "Index '$index' out-of range in find_branch_last_line" >&2
+        return 1
+    elif [ "$index" -eq $(( SRMLINES_COUNT - 1 )) ]; then
+        # last line of file is last line of branch
+        echo "$index"
+        return 0
+    fi
+
+    local -i ref_level=$( srm_level "$index" )
+    local -i off_level
+
+    while in_range $(( ++index )); do
+        off_level=$( srm_level "$index" )
+        if [ "$off_level" -ge "$ref_level" ]; then
+            break
+        fi
+    done
+    
+    if [ -n "$off_level" ]; then
+        (( --index ))
+    fi
+
+    echo "$index"
+    return 0
+}
+
+read_srm_file()
+{
+    local filepath="$1"
+    local line
+    local IFS=$'\n'
+    if [ -f "$filepath" ]; then
+        while read -s line; do
+            SRMLINES+=( "$line" )
+        done  < "$filepath"
+
+        SRMLINES_COUNT="${#SRMLINES[@]}"
+        return 0
+    fi
+
+    return 1
 }
 
 open_file()
 {
     local file="$1"
-    local branch="$2"
+    local branch_path="$2"
     local action="$3"
 
     local OIFS="${IFS}"
@@ -227,11 +484,136 @@ open_file()
         local -i SRMLINES_COUNT="${#SRMLINES[@]}"
 
         local -i branch_line
-        branch_line=$( find_branch "${branch}" )
+        branch_line=$( find_branch "${branch_path}" )
+
+        if [ $? -eq 0 ]; then
+            print_branch "$branch_line"
+        else
+            echo "Failed to find '$branch_path'" >&2
+        fi
+            
     fi
 }
 
-open_file "$1" "$2" "$3"
+SRM_splice()
+{
+    local -i index="$1"
+    local -i remove="$2"
+
+    if in_range "$index"; then
+        local -i start_right=0
+
+        # Left side, if any:
+        if [ "$index" -gt 0 ]; then
+            echo "${SRMLINES[*]:0:$(( index ))}"
+            start_right="$index"
+        fi
+
+        # New elements, if any
+        local spaces=$( make_spaces $( srm_level "$index" ) )
+        local param
+        for param in "${@:3}"; do
+            echo "${spaces}$param"
+        done
+
+        # Right side, if any left
+        if [ "$remove" -gt 0 ]; then
+            (( start_right += "$remove" ))
+        fi
+
+        if in_range "$start_right"; then
+            echo "${SRMLINES[*]:$start_right}"
+        fi
+    fi
+}
+
+DO_sibling-before()
+{
+    local -i index="$1"
+}
+
+DO_sibling-after()
+{
+    echo "Executing function DO_sibling-after" >&2
+    local IFS=$'\n'
+    local -i index="$1"
+    local -i level last_line
+    if level=$( srm_level "$index" ); then
+        if last_line=$( find_branch_last_line "$index" ); then
+            SRMLINES=( $( SRM_splice "$last_line" 0 "${@:2}" ) )
+            SRMLINES_COUNT="${#SRMLINES[@]}"
+            echo "New SRMLINES count is $SRMLINES_COUNT" >&2
+        fi
+    fi
+
+    echo "About to print the new srm file" >&2
+    print_srm
+}
+
+DO_child_append()
+{
+    local -i index="$1"
+}
+
+
+
+
+declare arg
+declare -i P_LINE_INDEX
+declare -f P_ACTION
+declare -a P_ARRAY
+declare -i P_FAILED_STATE
+clear_p_state()
+{
+    P_LINE_INDEX=
+    P_ACTION=
+    P_ARRAY=
+    P_FAILED_STATE=0
+}
+
+process_action()
+{
+    echo "in process_action with function '$P_ACTION'" >&2
+    if [ -n "$P_LINE_INDEX" ]; then
+        if [ -n "$P_ACTION" ]; then
+            "$P_ACTION" "$P_LINE_INDEX" "${P_ARRAY[@]}"
+        else
+            print_branch "$P_LINE_INDEX"
+        fi
+    fi
+}
+
+if read_srm_file "$1"; then
+    for arg in "${@:2}"; do
+        if [ "$P_FAILED_STATE" ]; then
+            # Discard parameters for this action, but allow
+            # secondary commands if the terminating "--" is
+            # found:
+            if [ "$arg" = "--" ]; then
+                clear_p_state
+            fi
+        elif [ "$arg" = "--" ]; then
+            process_action
+            clear_p_state
+        elif [ -z "$P_LINE_INDEX" ]; then
+            if ! P_LINE_INDEX=$( find_branch "$arg" ); then
+                P_FAILED_STATE=1
+                echo "Failed to find path '$arg'" >&2
+            fi
+        elif [ -z "$P_ACTION" ]; then
+            P_ACTION="DO_$arg"
+        else
+            P_ARRAY+=( "$arg" )
+        fi
+    done
+    # In case of missing "--", Catch any leftover status:
+    process_action
+else
+    echo "Failed to open '$1'" >&2
+fi
+
+
+# open_file "$1" "$2" "$3"
 
 
 
