@@ -141,7 +141,10 @@ get_setup_procedures_from_scripts()
 
 get_app_tables_from_scripts()
 {
-    local -a gcmd=( -v -e ^Salt$ -e ^Session_Info$ )
+    local -a gcmd=( -v
+                    -e ^Salt$ 
+                    -e ^Session_Info$
+                    -e ^Password_Reset_Codes$ )
     get_setup_tables_from_scripts | grep "${gcmd[@]}" -
 }
 
@@ -339,9 +342,13 @@ prepare_directories()
 copy_protected_scripts()
 {
     local pwd="${PWD}"
-    cd sql
 
+    cd sql
     cp -fs ../protected/*.sql .
+
+    cd "$pwd"
+    cd site
+    cp -fs ../protected/*.srm .
 
     cd "$pwd"
 }
@@ -475,6 +482,8 @@ install()
     fi
 
     create_autoload
+
+    ./setup_srms
 }
 
 uninstall()
