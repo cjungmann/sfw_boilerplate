@@ -79,6 +79,9 @@ if uid=$( get_user_id "$USER_HANDLE" ); then
     if code=$( get_pwcode "$uid" ); then
         set_password "$uid" "$code"
         echo "Password changed"
+
+        mysql "$DBNAME" -e "CALL App_User_Login('${USER_HANDLE}', '${NEW_PWORD}')"
+
     else
         echo "Failed to generate password code."
     fi
