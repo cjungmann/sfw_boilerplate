@@ -26,7 +26,6 @@ CREATE TABLE IF NOT EXISTS Session_Info
 
    -- Application-specific session values:
    id_user    INT UNSIGNED,
-   id_account INT UNSIGNED,
    handle     VARCHAR(128),
 
    INDEX(id_session)
