@@ -1,0 +1,65 @@
+$database : SFW_Boilerplate
+$xml-stylesheet : default.xsl
+$default-mode: login
+
+login
+   session-type : establish
+   type : form-page
+   schema-proc : App_User_Login
+   form-action : ?login_submit
+   autoload_tag : lpage
+   schema
+      button
+         label : Register New User
+         type  : jump
+         url   : ?register
+      field : handle
+         label : Handle
+      field : password
+         label : Password
+         html-type  : password
+
+login_submit
+   session-type : establish
+   type : form-jump
+   procedure : App_User_Login
+   result
+      type : variables
+      jumps
+         jump0 : User.srm
+         jump1 : ?login
+
+register
+   session-type : establish
+   type : form-page
+   schema-proc : App_User_Register
+   form-action : ?register_submit
+   autoload_tag: lpage
+   schema
+      button
+         label : Login with Existing User
+         type  : jump
+         url   : ?login
+      field : handle
+         label : Pick a Handle
+      field : email
+         label : Email
+      field : pword1
+         label : Password
+         html-type : password
+      field : pword2
+         label : Repeat Password
+         html-type : password
+
+
+register_submit
+   session-type : establish
+   drop-salt
+   type : form-jump
+   procedure : App_User_Register
+   result
+      type : variables
+      jumps
+         jump0 : User.srm
+         jump1 : ?register
+
