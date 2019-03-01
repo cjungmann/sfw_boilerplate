@@ -23,11 +23,9 @@ BEGIN
           INNER JOIN Salt s ON s.id_user = u.id
     WHERE u.id = user_id;
 
-    IF u_hash AND s_salt THEN
-       RETURN ssys_confirm_salted_hash(u_hash, s_salt, pword);
-    ELSE
-       RETURN False;
-    END IF;
+    RETURN u_hash IS NOT NULL
+           AND s_salt IS NOT NULL
+           AND ssys_confirm_salted_hash(u_hash, s_salt, pword);
 END $$
 
 -- This procedure should only be used after a user has been
@@ -236,9 +234,9 @@ CREATE PROCEDURE App_User_Login(handle VARCHAR(128),
 BEGIN
    DECLARE u_id INT UNSIGNED;
 
-   SELECT id INTO u_id
-     FROM User
-    WHERE `handle` = handle;
+   SELECT u.id INTO u_id
+     FROM User u
+    WHERE u.handle = handle;
 
    IF App_User_Confirm_Password(u_id, password) THEN
       CALL App_Session_Initialize(u_id, handle);
