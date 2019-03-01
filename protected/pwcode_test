@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+
+declare USER_HANDLE="$1"
+declare NEW_PWORD="${2:-bogus}"
+declare DBNAME="SFW_Boilerplate"
+
+show_usage()
+{
+    echo "pwcode_test <handle> <desired password>"
+}
+
+get_user_id()
+{
+    local user_handle="$1"
+    local query="SELECT id FROM User WHERE handle='${user_handle}';"
+    local -i id=$( mysql "$DBNAME" -BN -e "$query" )
+
+    if [ $? -eq 0 ] && [ "$id" -gt 0 ]; then
+        echo "  id is '$id'" >&2
+        echo $id
+        return 0
+    else
+        return 1
+    fi
+}
+
+get_pwcode()
+{
+    local -i user_id="$1"
+    local code=""
+    local -a stmts=(
+        "SET @dropped_salt = 'abcdefghijklmnopqrstuvwxyz123456';"
+        "CALL App_User_Create_Password_Code(${user_id});"
+    )
+
+    if [ "$user_id" -gt 0 ]; then
+        if code=$( mysql "$DBNAME" -BN <<< "${stmts[*]}" ); then
+            echo "code is '$code'" >&2
+            echo "$code"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+set_password()
+{
+    local -i user_id="$1"
+    local code="$2"
+
+    good_id()   { [ "$user_id" -gt 0 ]; }
+    good_code() { [ "${#code}" -eq 6 ]; }
+
+    if good_id && good_code; then
+        local -a query=(
+            "CALL App_User_Coded_Password_Change("
+            "$user_id,"
+            "'$code',"
+            "'${NEW_PWORD}',"
+            "'${NEW_PWORD}'"
+            ")"
+        )
+
+        mysql "$DBNAME" -BN -e "${query[*]}"
+    fi
+}
+
+# First action: check for parameters:
+if [ $# -lt 2 ]; then
+    show_usage
+    exit 1
+fi
+
+declare -i uid
+declare code
+
+if uid=$( get_user_id "$USER_HANDLE" ); then
+    if code=$( get_pwcode "$uid" ); then
+        set_password "$uid" "$code"
+        echo "Password changed"
+    else
+        echo "Failed to generate password code."
+    fi
+else
+    echo "Failed to get user id from user handle '${USER_HANDLE}'."
+fi
