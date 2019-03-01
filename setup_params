@@ -28,9 +28,9 @@ SITE_SESSION_TABLE="Session_Info"
 # in 'setup_apache' script
 SITE_NAME="sfw_boilerplate" # (required) .conf name and backup hostname
 
-SITE_INDEX="Person.srm" # DirectoryIndex value in .conf file.  If
-                        # missing, DirectoryIndex will be set to the
-                        # first SRM file in 'site' directory.
+SITE_INDEX="Login.srm" # DirectoryIndex value in .conf file.  If
+                       # missing, DirectoryIndex will be set to the
+                       # first SRM file in 'site' directory.
 
 SITE_URL=               # ServerName value in .conf file.  If
                         # missing, the ServerName will be set to
