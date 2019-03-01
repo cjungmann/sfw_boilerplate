@@ -464,6 +464,7 @@ create_autoload()
 install()
 {
     prepare_directories
+    ensure_database
     setup_framework
     copy_protected_scripts
 
