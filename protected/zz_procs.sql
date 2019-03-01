@@ -23,9 +23,11 @@ BEGIN
           INNER JOIN Salt s ON s.id_user = u.id
     WHERE u.id = user_id;
 
-    RETURN u_hash
-       AND s_salt
-       AND ssys_confirm_salted_hash(u_hash, s_salt, pword);
+    IF u_hash AND s_salt THEN
+       RETURN ssys_confirm_salted_hash(u_hash, s_salt, pword);
+    ELSE
+       RETURN False;
+    END IF;
 END $$
 
 -- This procedure should only be used after a user has been
@@ -142,7 +144,7 @@ BEGIN
    VALUES (user_id,
            t_code,
            ADDTIME(NOW(), '00:05:00'),
-           @t_salt,
+           t_salt,
            5);
 
    SELECT t_code;
