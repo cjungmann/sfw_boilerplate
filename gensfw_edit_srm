@@ -152,9 +152,10 @@ matches_step()
     # Argument #3
     local -i srmline="$3"
 
-    matches_tag_val() { [ "$tag" = "${node_test[0]}" ] && ( [ "${#node_test[@]}" -lt 1 ] || [ "${node_test[1]}" = "$val" ] ); }
+    tag_matches() { [ "$tag" = "${node_test[0]}" ]; }
+    val_matches() { [ "${#node_test[@]}" -lt 2 -o "$val" = "${node_test[1]}" ]; }
 
-    if matches_tag_val; then
+    if tag_matches && val_matches; then
         if matches_predicate "$predicate" $"srmline"; then
             return 0
         fi
@@ -179,6 +180,21 @@ make_spaces()
     for i in `seq 1 $1`; do
         printf ' '
     done
+}
+
+find_in_array()
+{
+    local needle="$1"
+    local straw
+    local -i ndx=0
+    for straw in "${@:2}"; do
+        if [ "$straw" = "$needle" ]; then
+            echo "$ndx"
+            return 0
+        fi
+        (( ++ndx))
+    done
+    return 1
 }
 
 
@@ -346,8 +362,10 @@ print_srm()
 {
     local -i index=-1
     local -i level
+    local line
     while in_range $(( ++index )); do
-        level=$( srm_level "$index" )
+        line="${SRMLINES[$index]}"
+        level=$( line_level "$line" )
         if [ $? -eq 0 ]; then
             if [ "$level" -eq 0 ]; then
                 print_branch "$index"
@@ -355,13 +373,10 @@ print_srm()
         else
             # If not an SRM line, it is a comment or empty line,
             # which will be preserved in the output file:
-            echo "${SRMLINES[$index]}"
+            echo "$line"
         fi
     done
 }
-
-
-
 
 # This function searches the entire SRMLINES array to find
 # the SRMLINES line index that satisfies the 'path' value.
@@ -387,26 +402,6 @@ find_branch()
             fi
         fi
     fi
-}
-
-find_parent()
-{
-    local -i ref_index="$1"
-    local -i ref_level=$( srm_level "$ref_index" )
-    if [ "$ref_level" -eq 0 ]; then
-        echo "-1"
-        return 0
-    fi
-
-    local -i level
-    for index in `seq $1 0 -1`; do
-        level=$( srm_level "$index" )
-        if [ "$level" -lt "$ref_level" ]; then
-            echo "$index"
-            return 0
-        fi
-    done
-    return 1
 }
 
 # When appending content after a branch, it must go
@@ -447,7 +442,10 @@ read_srm_file()
 {
     local filepath="$1"
     local line
+
+    # IFS required to preserve leading spaces
     local IFS=$'\n'
+
     if [ -f "$filepath" ]; then
         while read -s line; do
             SRMLINES+=( "$line" )
@@ -460,52 +458,23 @@ read_srm_file()
     return 1
 }
 
-open_file()
-{
-    local file="$1"
-    local branch_path="$2"
-    local action="$3"
-
-    local OIFS="${IFS}"
-    local IFS=$'\n'
-    local line;
-
-    if is_srm "$file"; then
-
-        echo "Opening file '$file'" >&2
-
-        # Get contents into an array:
-        local -a SRMLINES
-        while read -s line; do
-            SRMLINES+=( "$line" )
-        done  < "$file"
-
-        # Get upper index limit:
-        local -i SRMLINES_COUNT="${#SRMLINES[@]}"
-
-        local -i branch_line
-        branch_line=$( find_branch "${branch_path}" )
-
-        if [ $? -eq 0 ]; then
-            print_branch "$branch_line"
-        else
-            echo "Failed to find '$branch_path'" >&2
-        fi
-            
-    fi
-}
-
 SRM_splice()
 {
     local -i index="$1"
     local -i remove="$2"
+    local line
+
+    local IFS=$'\n'
 
     if in_range "$index"; then
         local -i start_right=0
 
         # Left side, if any:
         if [ "$index" -gt 0 ]; then
-            echo "${SRMLINES[*]:0:$(( index ))}"
+            for line in "${SRMLINES[@]:0:$index}"; do
+                echo "$line"
+            done
+            # echo "${SRMLINES[*]:0:$(( index ))}"
             start_right="$index"
         fi
 
@@ -522,10 +491,32 @@ SRM_splice()
         fi
 
         if in_range "$start_right"; then
-            echo "${SRMLINES[*]:$start_right}"
+            for line in "${SRMLINES[@]:$start_right}"; do
+                echo "$line"
+            done
+            # echo "${SRMLINES[*]:$start_right}"
         fi
     fi
 }
+
+# This set of variables are used when invoking 'eval "${update_srm}"'
+# to repackage the SRMLINES array with processed data.
+declare update_srm_IFS
+declare update_srm_String
+declare update_srm_line
+
+# Build update_srm string from array of strings for easier reading
+declare -a update_srm_cmds=(
+    "update_srm_IFS=\${IFS};"                # save IFS
+    "IFS=\$'\\n';"                           # set IFS to ignore all but newlines
+    "SRMLINES=();"                           # clear previous SRMLINES
+    "while read -s update_srm_line;"         # beginning of read statement
+    "do SRMLINES+=( \"\$update_srm_line\" );"
+    "done <<< \"\${update_srm_String}\";"
+    "SRMLINES_COUNT=\"\${#SRMLINES[@]}\";"   # new SRMLINES_COUNT for in_range()
+    "IFS=\"\${update_srm_IFS}\";"            # extra-careful clean up by restoring IFS
+    )
+declare update_srm=( "${update_srm_cmds[*]}" )
 
 DO_sibling-before()
 {
@@ -537,15 +528,15 @@ DO_sibling-after()
     local IFS=$'\n'
     local -i index="$1"
     local -i level last_line
+    local res
     if level=$( srm_level "$index" ); then
         if last_line=$( find_branch_last_line "$index" ); then
-            SRMLINES=( $( SRM_splice "$last_line" 0 "${@:2}" ) )
-            SRMLINES_COUNT="${#SRMLINES[@]}"
+            SRM_splice "$last_line" 0 "${@:2}"
+            return 0
         fi
     fi
 
-    echo "About to print the new srm file" >&2
-    print_srm
+    return 1
 }
 
 DO_child_append()
@@ -553,67 +544,119 @@ DO_child_append()
     local -i index="$1"
 }
 
+get_available_actions()
+{
+    local RE_FUNCTION='[[:space:]]DO_(.*)$'
+    local -a flist
+    local func
+    local IFS=$'\n'
+    if flist=( $( declare -f -F ) ); then
+        for func in "${flist[@]}"; do
+            if [[ "$func" =~ $RE_FUNCTION ]]; then
+                echo "${BASH_REMATCH[1]}"
+            fi
+        done
+    fi
+}
 
+show_available_actions()
+{
+    local -a actions=( $( get_available_actions ) )
+    echo "The actions currently available are:" >&2
+    printf "   %s\n" "${actions[@]}" >&2
+}
 
+process_action()
+{
+    if [ -n "$P_LINE_INDEX" ]; then
+        if [ -n "$P_ACTION" ]; then
+            # Swallow the return value. We're only interested
+            # in if the value exists or not.
+            local -i index
+            if index=$( find_in_array "$P_ACTION" "${DOActions[@]}" ); then
+                "DO_$P_ACTION" "$P_LINE_INDEX" "${P_ARRAY[@]}"
+                return "$?"
+            else
+                show_available_actions
+            fi
+        fi
+    fi
+    return 1
+}
 
-declare arg
-declare -i P_LINE_INDEX
+declare arg result
+declare -i P_LINE_INDEX=-2
 declare -f P_ACTION
 declare -a P_ARRAY
 declare -i P_FAILED_STATE
+
+declare OIFS="$IFS"
+IFS=$'\n'
+declare -a DOActions=( $( get_available_actions ) )
+IFS="${OIFS}"
+
+declare -a clear_p_state_arr=(
+    "P_LINE_INDEX=-2;"
+    "P_ACTION=;"
+    "P_ARRAY=;"
+    "P_FAILED_STATE=0"
+)
+
+echo "clear_p_state_arr = '${clear_p_state_arr[*]}'" >&2
+
 clear_p_state()
 {
-    P_LINE_INDEX=
+    P_LINE_INDEX=-2
     P_ACTION=
     P_ARRAY=
     P_FAILED_STATE=0
 }
 
-process_action()
-{
-    echo "in process_action with function '$P_ACTION'" >&2
-    if [ -n "$P_LINE_INDEX" ]; then
-        if [ -n "$P_ACTION" ]; then
-            "$P_ACTION" "$P_LINE_INDEX" "${P_ARRAY[@]}"
-        else
-            print_branch "$P_LINE_INDEX"
-        fi
-    fi
-}
+if [ "$1" = "--help" ]; then
+    show_available_actions
+    exit 0
+fi
 
 if read_srm_file "$1"; then
-    echo "New SRMLINES count is $SRMLINES_COUNT" >&2
     for arg in "${@:2}"; do
-        if [ "$P_FAILED_STATE" ]; then
+        if [ "$P_FAILED_STATE" -ne 0 ]; then
+            echo "FAILED STATE!" >&2
             # Discard parameters for this action, but allow
             # secondary commands if the terminating "--" is
             # found:
             if [ "$arg" = "--" ]; then
-                clear_p_state
+                eval "${clear_p_state_arr[*]}"
+                # clear_p_state
             fi
         elif [ "$arg" = "--" ]; then
-            process_action
-            clear_p_state
-        elif [ -z "$P_LINE_INDEX" ]; then
+            if update_srm_String=$( process_action ); then
+                eval $update_srm
+            fi
+            eval "${clear_p_state_arr[*]}"
+        elif [ "$P_LINE_INDEX" -lt -1 ]; then
             if ! P_LINE_INDEX=$( find_branch "$arg" ); then
                 P_FAILED_STATE=1
                 echo "Failed to find path '$arg'" >&2
             fi
         elif [ -z "$P_ACTION" ]; then
-            P_ACTION="DO_$arg"
+            P_ACTION="$arg"
         else
             P_ARRAY+=( "$arg" )
         fi
     done
+
     # In case of missing "--", Catch any leftover status:
-    process_action
+    if update_srm_String=$( process_action ); then
+        eval $update_srm
+    fi
+
+
+    # When finished, write out all the
+    # changes for study or saving:
+    print_srm
 else
     echo "Failed to open '$1'" >&2
 fi
-
-
-# open_file "$1" "$2" "$3"
-
 
 
 
