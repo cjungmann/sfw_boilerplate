@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+
+source "setup_params"
+
+# Confirm that a procedure name is loaded into MySQL
+# AND, if specified, contains a specific comment.
+#
+# Syntax:
+# is_commented_proc <procedure name> [comment filter]
+is_commented_proc()
+{
+    local PNAME="$1"
+    local -i count
+    local -a query=(
+        "SELECT COUNT(*)"
+        "FROM information_schema.ROUTINES"
+        "WHERE ROUTINE_SCHEMA='${DBASE}'"
+        "AND ROUTINE_NAME='${PNAME}'"
+        )
+
+    if [ $# -gt 1 ]; then
+        query=(
+            "${query[@]}"
+            "AND ROUTINE_COMMENT='${2}'"
+        )
+    fi
+
+
+    count=$( mysql information_schema -BN -e "${query[*]}" )
+
+    [ $count -eq 1 ]
+}
+
+# Returns a list of procedures defined in a named SQL script
+# (the function's one parameter) and confirmed to be loaded
+# into MySQL.
+get_setup_procedures_from_script()
+{
+    local filepath="$1"
+
+    local proc
+    local line
+    local -a lines
+    local -i count=0
+    local IFS=$'\n'
+    lines=( $( grep -h CREATE\ PROCEDURE "${filepath}" ) )
+    regexp='.*CREATE\ PROCEDURE[[:space:]+]([^\(]*).*$'
+    for line in "${lines[@]}"; do
+        if [[ "$line" =~ $regexp ]]; then
+            proc="${BASH_REMATCH[1]}"
+            if is_commented_proc "$proc" "form"; then
+                echo "${proc}"
+            elif is_commented_proc "$proc" "info"; then
+                echo "-${proc}"
+            fi
+        fi
+    done
+}
+
+# Parses the first of a list of procedure names get the
+# procedure prefix.  It is assumed that the procedure names
+# are in multiple words separated by underscores, like
+# App_User_Login, for which the prefix is "App_User_".
+get_procedure_prefix()
+{
+    local pname="$1"
+    local IFS=$'_'
+    local -a parts=( $pname )
+
+    if [ "${#parts[@]}" -gt 2 ]; then
+        echo "${parts[0]}_${parts[1]}_"
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Confirms that each procedure in a list has the same prefix,
+# which is passed as the first parameter.   Call like:
+# confirm_consisten_prefix "$prefix" "${procnames[@]}"
+confirm_consistent_prefix()
+{
+    local needle="$1"
+    local -a haystack="${@:2}"
+    local -a parts
+
+    local IFS=$'_'
+    for straw in "${haystack[@]}"; do
+        parts=( $straw )
+        if [ "${#parts[@]}" -gt 2 ]; then
+            if [ "$needle" != "${parts[0]}_${parts[1]}_" ]; then
+                return 1
+            fi
+        fi
+    done
+
+    return 0
+}
+
+# Given a file to modify (parameter 1, and a password field name,
+# add type : html-password instruction for each field in which
+# the instruction is missing.
+set_password_type()
+{
+    local target="$1"
+    local name="${2:-pword}"
+
+    local -a cmds=(
+
+        goto-if-not end "*/schema/field:${name}[!type]"  --
+
+        label start-loop --
+
+        last-child
+           "*/schema/field:${name}[!type]"
+           "type : html-password"
+           --
+
+        goto start-loop "*/schema/field:${name}[!type]" --
+
+        write_file "$target" --
+
+        label end --
+        )
+
+    /usr/bin/gensfw_srm "$target" "${cmds[@]}"
+}
+
+# Use the functions above to create a SRM file, modifying
+# the password fields to hide the input.
+create_login_srms()
+{
+    local target="site/Login.srm"
+    local -a procs=( $( get_setup_procedures_from_script "sql/zz_procs.sql" ) )
+
+    local proc proc_prefix mode_name
+    local -i prefix_len
+    local -a gsfp
+
+    echo -n > "$target"
+
+    for proc in "${procs[@]}"; do
+        proc_prefix=$( get_procedure_prefix "$proc" )
+        prefix_len="${#proc_prefix}"
+        proc_root="${proc:$prefix_len}"
+        mode_name="${proc_root,,}"
+
+        proc_name=
+        if [ "${proc:0:1}" == '-' ]; then
+            proc_name="${proc:1}"
+        else
+            proc_name="$proc"
+        fi
+
+        gsfp=(
+            "$DBASE"
+            "$proc_name"
+            "$mode_name"
+        )
+
+        if [ "${proc:0:1}" == '-' ]; then
+            gsfp=(
+                "${gsfp[@]}"
+                "info"
+            )
+        fi
+
+        echo "Creating '$mode_name' interaction." >&2
+        gensfw_srm_from_proc "${gsfp[@]}" >> "$target"
+    done
+
+    echo >&2
+    echo "Applying obscured input field for password type fields." >&2
+    local -a pword_fields
+    local -a gargs=( -o -e [^[:space:]]*pword[^[:space:]]* )
+    pword_fields=( $( grep "${gargs[@]}" site/LoginGen.srm ) )
+    pwords_unique=( $( sort -u <<< "${pword_fields[@]}" ) )
+
+    for pword_name in "${pwords_unique[@]}"; do
+        set_password_type "$target" "$pword_name"
+    done
+}
+
+create_login_srms
