@@ -1,45 +1,222 @@
 #!/bin/bash
 
-# Arguments to add password code request button on a User Edit page.
+replace_user_edit_from_proc_App_User_Add()
+{
+    local LOCDBNAME="${DBNAME:-SFW_Boilerplate}"
+
+    # Add blank line before new mode:
+    echo >> site/User.srm
+    gensfw_srm_from_proc "${LOCDBNAME}" App_User_Add >> site/User.srm
+    
+}
+
 declare -a ADD_EDIT_CODE_REQUEST_BUTTON=(
-    skip AECR_BUTTON_DONE "edit/schema/button[name:pwreq]" --
-
-    before-sibling "edit/schema/button[type:delete]" "button:new" --
-    last-child "edit/schema/button:new"
-       "type : call"
+    before-sibling "edit/schema/button[type:delete]" "button" --
+    last-child "edit/schema/button[!type:delete]"
        "name : pwreq"
-       "Label : Create Password Code"
-       "task : ?${mode_name}"
+       "type : call"
+       "label : Create Password Code"
+       "task : Login.srm?create_password_code_info&id={@id}"
        --
-
-    label AECR_BUTTON_DONE --
-
     )
 
-# Arguments to create response mode for showing the password change code.
-declare -a ADD_CODE_REQUEST_MODE=(
-    skip ACRM_MODE_DONE "pwreq_page" --
+add_password_code_request_button_to_user_edit()
+{
+    declare -a cmdarr
+    echo "Add password code request button to user edit."
+    cmdarr=(
+        goto AECR_BUTTON_DONE "edit/schema/button[name:pwreq]" --
 
+        "${ADD_EDIT_CODE_REQUEST_BUTTON[@]}"
+        write_file "site/User.srm"
+
+        label AECR_BUTTON_DONE --
+    )
+    gensfw_srm site/User.srm "${cmdarr[@]}"
+}
+
+declare -a ADD_CODE_REQUEST_MODE=(
     append_mode "pwreq_page" --
     last-child "pwreq_page"
        "type : form-page"
        "procedure : App_User_Create_Password_Code"
-
-    label ACRM_MODE_DONE --
 )
+
+add_response_mode_for_password_code_request()
+{
+    echo "Adding response mode for password code request"
+    local -a cmdarr=(
+        goto ACRM_MODE_DONE "pwreq_page" --
+
+        "${ADD_CODE_REQUEST_NODE[@]}"
+        write_file "site/User.srm"
+
+        label ACRM_MODE_DONE --
+    )
+    gensfw_srm site/User.srm "${cmdarr[@]}"
+}
+
 
 # Arguments to add identity session instructions to autoload.srm
 declare -a ADD_SESSION_INFO_TO_AUTOLOAD=(
-    skip ASITA_DONE "\$session-type:identity" --
-
     after-sibling "\$default-mode"
        "\$session-type: identity"
        "\$test-authorized : App_Session_Confirm"
        "\$jump-not-authorized : Login.srm"
     --
-
-    label ASITA_DONE --
 )
+
+add_session_info_to_autoload()
+{
+    echo "Adding session type info to autoload.srm"
+    local -a cmdarr=(
+        goto ASITA_DONE "\$session-type:identity" --
+
+        "${ADD_SESSION_INFO_TO_AUTOLOAD[@]}"
+        write_file "site/autoload.srm"
+
+        label ASITA_DONE --
+    )
+    gensfw_srm site/autoload.srm "${cmdarr[@]}"
+}
+
+
+declare -a ADD_CODE_REQUEST_MODE=(
+    append_mode "pwreq_page" --
+    last-child "pwreq_page"
+       "type : form-page"
+       "procedure : App_User_Create_Password_Code"
+)
+
+add_response_mode_for_password_code_request()
+{
+    echo "Adding response mode for password code request"
+    local -a cmdarr=(
+        goto ACRM_MODE_DONE "pwreq_page" --
+
+        "${ADD_CODE_REQUEST_NODE[@]}"
+        write_file "site/User.srm"
+
+        label ACRM_MODE_DONE --
+    )
+    gensfw_srm site/User.srm "${cmdarr[@]}"
+}
+
+
+# Arguments to add identity session instructions to autoload.srm
+declare -a ADD_SESSION_INFO_TO_AUTOLOAD=(
+    after-sibling "\$default-mode"
+       "\$session-type: identity"
+       "\$test-authorized : App_Session_Confirm"
+       "\$jump-not-authorized : Login.srm"
+    --
+)
+
+add_session_info_to_autoload()
+{
+    echo "Adding session type info to autoload.srm"
+    local -a cmdarr=(
+        goto ASITA_DONE "\$session-type:identity" --
+
+        "${ADD_SESSION_INFO_TO_AUTOLOAD[@]}"
+        write_file "site/autoload.srm"
+
+        label ASITA_DONE --
+    )
+    gensfw_srm site/autoload.srm "${cmdarr[@]}"
+}
+
+declare -a ADD_CODE_REQUEST_MODE=(
+    append_mode "pwreq_page" --
+    last-child "pwreq_page"
+       "type : form-page"
+       "procedure : App_User_Create_Password_Code"
+)
+
+add_response_mode_for_password_code_request()
+{
+    echo "Adding response mode for password code request"
+    local -a cmdarr=(
+        goto ACRM_MODE_DONE "pwreq_page" --
+
+        "${ADD_CODE_REQUEST_NODE[@]}"
+        write_file "site/User.srm" --
+
+        label ACRM_MODE_DONE --
+    )
+    gensfw_srm site/User.srm "${cmdarr[@]}"
+}
+
+
+# Arguments to add identity session instructions to autoload.srm
+declare -a ADD_SESSION_INFO_TO_AUTOLOAD=(
+    after-sibling "\$default-mode"
+       "\$session-type: identity"
+       "\$test-authorized : App_Session_Confirm"
+       "\$jump-not-authorized : Login.srm"
+    --
+)
+
+add_session_info_to_autoload()
+{
+    echo "Adding session type info to autoload.srm"
+    local -a cmdarr=(
+        goto ASITA_DONE "\$session-type:identity" --
+
+        "${ADD_SESSION_INFO_TO_AUTOLOAD[@]}"
+        write_file "site/autoload.srm"
+
+        label ASITA_DONE --
+    )
+    gensfw_srm site/autoload.srm "${cmdarr[@]}"
+}
+
+declare -a ADD_CODE_REQUEST_MODE=(
+    append_mode "pwreq_page" --
+    last-child "pwreq_page"
+       "type : form-page"
+       "procedure : App_User_Create_Password_Code"
+)
+
+add_response_mode_for_password_code_request()
+{
+    echo "Adding response mode for password code request"
+    local -a cmdarr=(
+        goto ACRM_MODE_DONE "pwreq_page" --
+
+        "${ADD_CODE_REQUEST_NODE[@]}"
+        write_file "site/User.srm"
+
+        label ACRM_MODE_DONE --
+    )
+    gensfw_srm site/User.srm "${cmdarr[@]}"
+}
+
+
+# Arguments to add identity session instructions to autoload.srm
+declare -a ADD_SESSION_INFO_TO_AUTOLOAD=(
+    after-sibling "\$default-mode"
+       "\$session-type: identity"
+       "\$test-authorized : App_Session_Confirm"
+       "\$jump-not-authorized : Login.srm"
+    --
+)
+
+add_session_info_to_autoload()
+{
+    echo "Adding session type info to autoload.srm"
+    local -a cmdarr=(
+        goto ASITA_DONE "\$session-type:identity" --
+
+        "${ADD_SESSION_INFO_TO_AUTOLOAD[@]}"
+        write_file "site/autoload.srm"
+
+        label ASITA_DONE --
+    )
+    gensfw_srm site/autoload.srm "${cmdarr[@]}"
+}
+
+
 
 # Nothing here yet.   Fill this in when the Login.srm script
 # is established.
@@ -49,7 +226,11 @@ declare -a ADD_RELAXED_AUTHORIZATION_FOR_LOGIN=(
     after-sibling edit_submit/type "session-type : establish" --
 )
 
+replace_user_edit_from_proc_App_User_Add
 
-gensfw_srm site/User.srm "${ADD_EDIT_CODE_REQUEST_BUTTON[@]}" "${ADD_CODE_REQUEST_MODE[@]}"
-gensfw_srm site/autoload.srm "${ADD_SESSION_INFO_TO_AUTOLOAD[@]}"
+add_response_mode_for_password_code_request
+add_password_code_request_button_to_user_edit
+add_session_info_to_autoload
+
+
 
