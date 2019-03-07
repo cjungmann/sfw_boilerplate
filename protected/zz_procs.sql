@@ -34,6 +34,8 @@ END $$
 
 -- -----------------------------------------------------------
 -- Utility procedure, called by App_User_Coded_Password_Change
+-- and App_User_Password_Change.
+--
 -- This procedure does not validate the user, so that should
 -- have been done before calling this procedure.
 -- -----------------------------------------------------------
@@ -50,14 +52,14 @@ BEGIN
 END $$
 
 -- -------------------------------------------------------
--- Utility procedure, only called by debugging script and
--- should probably be deleted at some point.
+-- Procedure called to update a user's password.
 -- -------------------------------------------------------
 DROP PROCEDURE IF EXISTS App_User_Coded_Password_Change $$
 CREATE PROCEDURE App_User_Coded_Password_Change(user_id INT UNSIGNED,
                                                 code CHAR(6),
                                                 pword1 VARCHAR(40),
                                                 pword2 VARCHAR(40))
+COMMENT 'form'
 proc_block: BEGIN
    DECLARE t_expires DATETIME;
    DECLARE t_salt CHAR(32);
@@ -125,6 +127,7 @@ END $$
 -- ------------------------------------------------------
 DROP PROCEDURE IF EXISTS App_User_Create_Password_Code $$
 CREATE PROCEDURE App_User_Create_Password_Code(user_id INT UNSIGNED)
+COMMENT 'info'
 BEGIN
    -- IMPORTANT NOTE:
    -- Use session variables to confirm authority to create this code.
