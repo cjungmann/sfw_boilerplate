@@ -9,7 +9,11 @@
 
 DELIMITER $$
 
--- ----------------------------------------------
+-- -------------------------------------------------
+-- Utility function, called by App_User_Login and
+-- App_User_Password_Change to look up hash and salt
+-- values to validate the submitted password.
+-- -------------------------------------------------
 DROP FUNCTION IF EXISTS App_User_Confirm_Password $$
 CREATE FUNCTION App_User_Confirm_Password(user_id INT UNSIGNED,
                                           pword VARCHAR(40))
@@ -28,8 +32,10 @@ BEGIN
            AND ssys_confirm_salted_hash(u_hash, s_salt, pword);
 END $$
 
--- This procedure should only be used after a user has been
--- confirmed.
+-- -----------------------------------------------------------
+-- Utility procedure, called by App_User_Coded_Password_Change
+-- This procedure does not validate the user, so that should
+-- have been done before calling this procedure.
 -- -----------------------------------------------------------
 DROP PROCEDURE IF EXISTS App_User_Confirmed_Password_Change $$
 CREATE PROCEDURE App_User_Confirmed_Password_Change(user_id INT UNSIGNED,
@@ -43,6 +49,9 @@ BEGIN
     WHERE u.id = user_id;
 END $$
 
+-- -------------------------------------------------------
+-- Utility procedure, only called by debugging script and
+-- should probably be deleted at some point.
 -- -------------------------------------------------------
 DROP PROCEDURE IF EXISTS App_User_Coded_Password_Change $$
 CREATE PROCEDURE App_User_Coded_Password_Change(user_id INT UNSIGNED,
@@ -111,6 +120,9 @@ proc_block: BEGIN
 END $$
 
 -- ------------------------------------------------------
+-- Utility procedure, only called by debugging script and
+-- should probably be deleted at some point.
+-- ------------------------------------------------------
 DROP PROCEDURE IF EXISTS App_User_Create_Password_Code $$
 CREATE PROCEDURE App_User_Create_Password_Code(user_id INT UNSIGNED)
 BEGIN
@@ -148,6 +160,8 @@ BEGIN
    SELECT t_code;
 END $$
 
+-- --------------------------------------------------------------
+-- Utility procedure, called by procedure App_User_Register.
 -- --------------------------------------------------------------
 DROP PROCEDURE IF EXISTS App_User_Create $$
 CREATE PROCEDURE App_User_Create(handle VARCHAR(128),
@@ -211,6 +225,7 @@ CREATE PROCEDURE App_User_Register(handle VARCHAR(128),
                                    email VARCHAR(128),
                                    pword1 VARCHAR(40),
                                    pword2 VARCHAR(40))
+COMMENT 'form'
 BEGIN
    DECLARE newid INT UNSIGNED;
 
@@ -230,7 +245,8 @@ END $$
 -- ---------------------------------------
 DROP PROCEDURE IF EXISTS App_User_Login $$
 CREATE PROCEDURE App_User_Login(handle VARCHAR(128),
-                                password VARCHAR(40))
+                                pword VARCHAR(40))
+COMMENT 'form'
 BEGIN
    DECLARE u_id INT UNSIGNED;
 
@@ -238,7 +254,7 @@ BEGIN
      FROM User u
     WHERE u.handle = handle;
 
-   IF App_User_Confirm_Password(u_id, password) THEN
+   IF App_User_Confirm_Password(u_id, pword) THEN
       CALL App_Session_Initialize(u_id, handle);
       SELECT 0 AS error, 'Success' AS msg;
    ELSE
@@ -253,6 +269,7 @@ CREATE PROCEDURE App_User_Password_Change(user_id INT UNSIGNED,
                                           old_pword VARCHAR(40),
                                           new_pword1 VARCHAR(40),
                                           new_pword2 VARCHAR(40))
+COMMENT 'form'
 proc_block: BEGIN
    DECLARE t_salt CHAR(32);
 
@@ -287,12 +304,13 @@ END $$
 DROP PROCEDURE IF EXISTS App_User_Add $$
 CREATE PROCEDURE App_User_Add(handle VARCHAR(128),
                               email VARCHAR(128),
-                              password1 VARCHAR(20),
-                              password2 VARCHAR(20))
+                              pword1 VARCHAR(20),
+                              pword2 VARCHAR(20))
+COMMENT 'form'
 BEGIN
    DECLARE newid INT UNSIGNED;
 
-   CALL App_User_Create(handle,email,password1,password2,newid);
+   CALL App_User_Create(handle,email,pword1,pword2,newid);
 
    IF newid IS NOT NULL THEN
       CALL App_User_List(newid);
