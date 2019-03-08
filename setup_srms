@@ -14,9 +14,9 @@ declare -a ADD_EDIT_CODE_REQUEST_BUTTON=(
     before-sibling "edit/schema/button[type:delete]" "button" --
     last-child "edit/schema/button[!type:delete]"
        "name : pwreq"
-       "type : call"
+       "type : open"
        "label : Create Password Code"
-       "task : Login.srm?create_password_code_info&id={@id}"
+       "url : LoginGen.srm?create_password_code_view&id={@id}"
        --
     )
 
