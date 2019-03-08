@@ -196,9 +196,6 @@ create_login_srms()
             )
         fi
 
-        echo  >&2
-        echo "${gsfp[*]}" >&2
-        echo "Creating '$mode_name' interaction." >&2
         gensfw_srm_from_proc "${gsfp[@]}" >> "$TARGET"
     done
 
