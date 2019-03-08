@@ -51,6 +51,144 @@ BEGIN
     WHERE u.id = user_id;
 END $$
 
+-- --------------------------------------------------------------
+-- Utility procedure, called by procedure App_User_Register.
+-- --------------------------------------------------------------
+DROP PROCEDURE IF EXISTS App_User_Create $$
+CREATE PROCEDURE App_User_Create(handle VARCHAR(128),
+                                 email VARCHAR(128),
+                                 pword1 VARCHAR(40),
+                                 pword2 VARCHAR(40),
+                                 newid INT UNSIGNED)
+proc_block: BEGIN
+   DECLARE rcount INT UNSIGNED;
+
+   SET newid = NULL;
+
+   -- Check early termination conditions:
+   IF @dropped_salt IS NULL THEN
+      -- Fatal error, use non-recoverable termination
+      SIGNAL SQLSTATE '45000'
+             SET MESSAGE_TEXT='Missing drop-salt instruction.';
+   END IF;
+
+   IF STRCMP(pword1, pword2) THEN
+      -- Query to populate the standard form-result variables
+      SELECT 1 AS error, 'Mismatched Passwords' AS msg;
+      LEAVE proc_block;
+   END IF;
+
+   -- Application-specific code:
+
+   -- Use transaction because rows are created in both Salt and User
+   START TRANSACTION;
+
+   INSERT INTO User (pw_hash,
+                     handle,
+                     email)
+             VALUES (ssys_hash_password_with_salt(pword1, @dropped_salt),
+                     handle,
+                     email);
+
+   IF ROW_COUNT() > 0 THEN
+      SET newid = LAST_INSERT_ID();
+      INSERT INTO Salt (id_user, salt)
+           VALUES (newid, @dropped_salt);
+
+      -- Save ROW_COUNT() so commit doesn't change it.(?)
+      -- Otherwise, ROW_COUNT() is never > 0.
+      SET rcount = ROW_COUNT();
+
+      IF rcount > 0 THEN
+         COMMIT;
+      ELSE
+         SET newid = NULL;
+         ROLLBACK;
+      END IF;
+   ELSE
+      ROLLBACK;
+   END IF;
+END $$
+
+-- ---------------------------------------
+DROP PROCEDURE IF EXISTS App_User_Login $$
+CREATE PROCEDURE App_User_Login(handle VARCHAR(128),
+                                pword VARCHAR(40))
+COMMENT 'form'
+BEGIN
+   DECLARE u_id INT UNSIGNED;
+
+   SELECT u.id INTO u_id
+     FROM User u
+    WHERE u.handle = handle;
+
+   IF App_User_Confirm_Password(u_id, pword) THEN
+      CALL App_Session_Initialize(u_id, handle);
+      SELECT 0 AS error, 'Success' AS msg;
+   ELSE
+      SELECT 1 AS error, 'Invalid handle or password.' AS msg;
+   END IF;
+
+END $$
+
+-- ----------------------------------------
+DROP PROCEDURE IF EXISTS App_User_Register $$
+CREATE PROCEDURE App_User_Register(handle VARCHAR(128),
+                                   email VARCHAR(128),
+                                   pword1 VARCHAR(40),
+                                   pword2 VARCHAR(40))
+COMMENT 'form'
+BEGIN
+   DECLARE newid INT UNSIGNED;
+
+   CALL App_User_Create(handle,email,pword1,pword2,newid);
+
+   IF newid IS NULL THEN
+      SELECT 1 AS error,
+             CONCAT('Failed to create new user account for ''', handle, '''.') AS msg;
+   ELSE
+      CALL App_Session_Initialize(newid,handle);
+      SELECT 0 AS error, 'Success' AS msg;
+   END IF;
+
+END $$
+
+
+-- -------------------------------------------------
+DROP PROCEDURE IF EXISTS App_User_Password_Change $$
+CREATE PROCEDURE App_User_Password_Change(user_id INT UNSIGNED,
+                                          old_pword VARCHAR(40),
+                                          new_pword1 VARCHAR(40),
+                                          new_pword2 VARCHAR(40))
+COMMENT 'form'
+proc_block: BEGIN
+   DECLARE t_salt CHAR(32);
+
+   -- Check early termination conditions:
+   IF @dropped_salt IS NOT NULL THEN
+      SET t_salt = @dropped_salt;
+      SET @dropped_salt = NULL;
+   ELSE
+      -- Fatal error, use non-recoverable termination
+      SIGNAL SQLSTATE '45000'
+             SET MESSAGE_TEXT='Missing drop-salt instruction.';
+   END IF;
+
+   IF STRCMP(new_pword1, new_pword2) THEN
+      SELECT 1 AS error, 'Mismatched Passwords' AS msg;
+      LEAVE proc_block;
+   END IF;
+
+   IF NOT App_User_Confirm_Password(user_id, old_pword) THEN
+      SELECT 1 AS error, 'Invalid Password' AS msg;
+      LEAVE proc_block;
+   END IF;
+
+   CALL App_User_Confirmed_Password_Change(user_id,
+                                           t_salt,
+                                           new_pword1);
+END $$
+
 -- -------------------------------------------------------
 -- Procedure called to update a user's password.
 -- -------------------------------------------------------
@@ -121,6 +259,7 @@ proc_block: BEGIN
    SELECT 0 AS error, "Success" AS msg;
 END $$
 
+
 -- ------------------------------------------------------
 -- Utility procedure, only called by debugging script and
 -- should probably be deleted at some point.
@@ -162,145 +301,6 @@ BEGIN
 
    SELECT t_code;
 END $$
-
--- --------------------------------------------------------------
--- Utility procedure, called by procedure App_User_Register.
--- --------------------------------------------------------------
-DROP PROCEDURE IF EXISTS App_User_Create $$
-CREATE PROCEDURE App_User_Create(handle VARCHAR(128),
-                                 email VARCHAR(128),
-                                 pword1 VARCHAR(40),
-                                 pword2 VARCHAR(40),
-                                 newid INT UNSIGNED)
-proc_block: BEGIN
-   DECLARE rcount INT UNSIGNED;
-
-   SET newid = NULL;
-
-   -- Check early termination conditions:
-   IF @dropped_salt IS NULL THEN
-      -- Fatal error, use non-recoverable termination
-      SIGNAL SQLSTATE '45000'
-             SET MESSAGE_TEXT='Missing drop-salt instruction.';
-   END IF;
-
-   IF STRCMP(pword1, pword2) THEN
-      -- Query to populate the standard form-result variables
-      SELECT 1 AS error, 'Mismatched Passwords' AS msg;
-      LEAVE proc_block;
-   END IF;
-
-   -- Application-specific code:
-
-   -- Use transaction because rows are created in both Salt and User
-   START TRANSACTION;
-
-   INSERT INTO User (pw_hash,
-                     handle,
-                     email)
-             VALUES (ssys_hash_password_with_salt(pword1, @dropped_salt),
-                     handle,
-                     email);
-
-   IF ROW_COUNT() > 0 THEN
-      SET newid = LAST_INSERT_ID();
-      INSERT INTO Salt (id_user, salt)
-           VALUES (newid, @dropped_salt);
-
-      -- Save ROW_COUNT() so commit doesn't change it.(?)
-      -- Otherwise, ROW_COUNT() is never > 0.
-      SET rcount = ROW_COUNT();
-
-      IF rcount > 0 THEN
-         COMMIT;
-      ELSE
-         SET newid = NULL;
-         ROLLBACK;
-      END IF;
-   ELSE
-      ROLLBACK;
-   END IF;
-END $$
-
--- ----------------------------------------
-DROP PROCEDURE IF EXISTS App_User_Register $$
-CREATE PROCEDURE App_User_Register(handle VARCHAR(128),
-                                   email VARCHAR(128),
-                                   pword1 VARCHAR(40),
-                                   pword2 VARCHAR(40))
-COMMENT 'form'
-BEGIN
-   DECLARE newid INT UNSIGNED;
-
-   CALL App_User_Create(handle,email,pword1,pword2,newid);
-
-   IF newid IS NULL THEN
-      SELECT 1 AS error,
-             CONCAT('Failed to create new user account for ''', handle, '''.') AS msg;
-   ELSE
-      CALL App_Session_Initialize(newid,handle);
-      SELECT 0 AS error, 'Success' AS msg;
-   END IF;
-
-END $$
-
-
--- ---------------------------------------
-DROP PROCEDURE IF EXISTS App_User_Login $$
-CREATE PROCEDURE App_User_Login(handle VARCHAR(128),
-                                pword VARCHAR(40))
-COMMENT 'form'
-BEGIN
-   DECLARE u_id INT UNSIGNED;
-
-   SELECT u.id INTO u_id
-     FROM User u
-    WHERE u.handle = handle;
-
-   IF App_User_Confirm_Password(u_id, pword) THEN
-      CALL App_Session_Initialize(u_id, handle);
-      SELECT 0 AS error, 'Success' AS msg;
-   ELSE
-      SELECT 1 AS error, 'Invalid handle or password.' AS msg;
-   END IF;
-
-END $$
-
--- -------------------------------------------------
-DROP PROCEDURE IF EXISTS App_User_Password_Change $$
-CREATE PROCEDURE App_User_Password_Change(user_id INT UNSIGNED,
-                                          old_pword VARCHAR(40),
-                                          new_pword1 VARCHAR(40),
-                                          new_pword2 VARCHAR(40))
-COMMENT 'form'
-proc_block: BEGIN
-   DECLARE t_salt CHAR(32);
-
-   -- Check early termination conditions:
-   IF @dropped_salt IS NOT NULL THEN
-      SET t_salt = @dropped_salt;
-      SET @dropped_salt = NULL;
-   ELSE
-      -- Fatal error, use non-recoverable termination
-      SIGNAL SQLSTATE '45000'
-             SET MESSAGE_TEXT='Missing drop-salt instruction.';
-   END IF;
-
-   IF STRCMP(new_pword1, new_pword2) THEN
-      SELECT 1 AS error, 'Mismatched Passwords' AS msg;
-      LEAVE proc_block;
-   END IF;
-
-   IF NOT App_User_Confirm_Password(user_id, old_pword) THEN
-      SELECT 1 AS error, 'Invalid Password' AS msg;
-      LEAVE proc_block;
-   END IF;
-
-   CALL App_User_Confirmed_Password_Change(user_id,
-                                           t_salt,
-                                           new_pword1);
-END $$
-
 
 -- Replace procedure from User.sql
 -- -------------------------------------
