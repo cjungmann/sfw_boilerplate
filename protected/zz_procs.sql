@@ -127,7 +127,7 @@ END $$
 -- ------------------------------------------------------
 DROP PROCEDURE IF EXISTS App_User_Create_Password_Code $$
 CREATE PROCEDURE App_User_Create_Password_Code(user_id INT UNSIGNED)
-COMMENT 'info'
+COMMENT 'view'
 BEGIN
    -- IMPORTANT NOTE:
    -- Use session variables to confirm authority to create this code.
