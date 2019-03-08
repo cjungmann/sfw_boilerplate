@@ -330,6 +330,8 @@ setup_framework()
 
 prepare_directories()
 {
+    echo "Creating project directories."
+
     local dir
 
     for dir in "${DIR_LIST[@]}"; do
@@ -341,6 +343,8 @@ prepare_directories()
 
 copy_protected_scripts()
 {
+    echo "Copying files from protected directory."
+
     local pwd="${PWD}"
 
     cd sql
@@ -374,15 +378,17 @@ load_tables_from_sql_scripts()
                 fi
             done
         fi
+        echo "Finished loading tables."
     fi
 
     cd "$pwd"
 
-    echo "Finished loading tables."
 }
 
 generate_scripts_from_mysql_tables()
 {
+    echo "Generating scripts from MySQL tables."
+
     local -a APP_TABLES
     APP_TABLES=( $( get_app_tables_from_scripts ) )
     for table in "${APP_TABLES[@]}"; do
@@ -394,6 +400,8 @@ generate_scripts_from_mysql_tables()
 
 load_procedures_from_sql_scripts()
 {
+    echo "About to attempt loading procedures from sql scripts."
+    
     local pwd="${PWD}"
     cd sql
 
@@ -421,6 +429,8 @@ load_procedures_from_sql_scripts()
 
 create_autoload_from_srm_files()
 {
+    echo "Creating autoload.srm file."
+    
     local target="autoload.srm"
     local pwd="${PWD}"
     cd site
