@@ -2,8 +2,31 @@
 
 source "setup_params"
 
-TARGET="site/LoginGen.srm"
-GENSFW_SRM="/usr/bin/gensfw_srm"
+declare TARGET="site/LoginGen.srm"
+# declare GENSFW_SRM="/usr/bin/gensfw_srm"
+declare GENSFW_SRM="/home/chuck/work/scripts/gensfw/gensfw_srm"
+
+# declare -a PAGE_TITLES=(
+#     login
+#     "Login"
+
+#     register
+#     "Register a New User"
+
+#     password_change
+#     "Changing Your Password"
+
+#     coded_password_change
+#     "Recovering Your Password"
+
+#     create_password_code_view
+#     "Password Code Test Page"
+
+#     add
+#     "Add a New User"
+#     )
+
+
 
 # Confirm that a procedure name is loaded into MySQL
 # AND, if specified, contains a specific comment.
@@ -27,7 +50,6 @@ is_commented_proc()
             "AND ROUTINE_COMMENT='${2}'"
         )
     fi
-
 
     count=$( mysql information_schema -BN -e "${query[*]}" )
 
@@ -78,83 +100,12 @@ get_procedure_prefix()
     fi
 }
 
-# Given a file to modify (parameter 1, and a password field name,
-# add type : html-password instruction for each field in which
-# the instruction is missing.
-set_password_type()
-{
-    local name="${2:-pword}"
-
-    local -a cmds=(
-
-        goto-if-not end "*/schema/field:${name}[!type]"  --
-
-        label start-loop --
-
-        last-child
-           "*/schema/field:${name}[!type]"
-           "type : html-password"
-           --
-
-        goto start-loop "*/schema/field:${name}[!type]" --
-
-        write_file "$TARGET" --
-
-        label end --
-        )
-
-    $GENSFW_SRM "$TARGET" "${cmds[@]}"
-}
-
-tweak_create_password_code_info()
-{
-    local -a cmds=(
-        goto
-           SKIP_MODS
-           "create_password_code_view[drop-salt]"
-           --
-
-        after-sibling
-           "create_password_code_view/procedure" 
-           "drop-salt"
-           --
-
-        write_file "$TARGET" --
-
-        label SKIP_MODS --
-        )
-
-    $GENSFW_SRM "$TARGET" "${cmds[@]}"
-}
-
-tweak_response_mode_session()
-{
-    local mode_name="$1"
-    local -a cmds=(
-        goto
-           "SKIP_MODS"
-           "$mode_name/session-type"
-           --
-
-        sibling-after
-           "$mode_name/type"
-           "session-type : establish"
-           --
-
-        write_file "$TARGET" --
-
-
-        label "SKIP_MODS" --
-    )
-
-    $GENSFW_SRM "$TARGET" "${cmds[@]}"
-}
-
 # Use the functions above to create a SRM file, modifying
 # the password fields to hide the input.
-create_login_srms()
+generate_login_srm_file_from_script()
 {
-    local -a procs=( $( get_setup_procedures_from_script "sql/zz_procs.sql" ) )
+    local script="$1"
+    local -a procs=( $( get_setup_procedures_from_script "$script" ) )
 
     local proc proc_prefix mode_name
     local -i prefix_len
@@ -167,7 +118,7 @@ create_login_srms()
 
     echo "\$database : $DBASE"            >> "$TARGET"
     echo "\$xml-stylesheet : default.xsl" >> "$TARGET"
-    # echo "\$default-mode : login"         >> "$TARGET"
+    echo "\$default-mode : login"         >> "$TARGET"
     echo                                  >> "$TARGET"
 
     for proc in "${procs[@]}"; do
@@ -199,17 +150,397 @@ create_login_srms()
         gensfw_srm_from_proc "${gsfp[@]}" >> "$TARGET"
     done
 
-    echo >&2
-    echo "Applying obscured input field for password type fields." >&2
-    local -a pword_fields
-    local -a gargs=( -o -e [^[:space:]]*pword[^[:space:]]* )
-    pword_fields=( $( grep "${gargs[@]}" site/LoginGen.srm ) )
-    pwords_unique=( $( sort -u <<< "${pword_fields[@]}" ) )
+}
 
-    for pword_name in "${pwords_unique[@]}"; do
-        set_password_type "$TARGET" "$pword_name"
+### Array-building Section ###
+
+# The functions below work in pairs, one function of the pair creates a set
+# of elements for a given set of parameters, the second function of the pair
+# calls the first multiple times to create the full array of changes needed
+# to affect a category of changes.
+
+# make_single_password_field_type_array
+# get_combined_password_field_type_array
+
+# make_single_establish_session_array
+# get_combined_establish_session_array
+
+# make_single_drop_salt_array
+# get_combined_drop_salt_array
+
+# make_single_add_button_array
+# get_combined_add_button_array
+
+# make_single_login_page_settings_array
+# get_combined_login_page_settings_array
+
+# make_single_title_setting_array
+# get_combined_title_settings_array
+
+
+# Echo array elements for a single field.
+# Called by get_combined_password_field_type_array()
+make_single_password_field_type_array()
+{
+    local field_name="$1"
+
+    local label_suffix="gspw_${field_name}"
+
+    local label_end="END_${label_suffix}"
+    local label_loop="LOOP_${label_suffix}"
+
+    local path_match="*/schema/field:${field_name}[!type]"
+
+    echo "goto-if-not"
+    echo "$label_end"
+    echo "${path_match}"
+    echo "--"
+
+    echo "label"
+    echo "$label_loop"
+    echo "--"
+
+    echo "last-child"
+    echo "${path_match}"
+    echo "type:html-password"
+    echo "--"
+
+    echo "label"
+    echo "$label_end"
+    echo "--"
+}
+
+# Collect array elements for password field types
+get_combined_password_field_type_array()
+{
+    local IFS=$'\n'
+    local -a grep_args=( -o -e [^[:space:]]*pword[^[:space:]]* )
+    local -a pword_fields pwords_unique
+    pword_fields=( $( grep "${grep_args[@]}" "$TARGET" ) )
+    pwords_unique=( $( echo "${pword_fields[*]}" | sort -u - ) )
+
+    for name in "${pwords_unique[@]}"; do
+        make_single_password_field_type_array "$name"
     done
 }
 
-create_login_srms
-tweak_create_password_code_info
+# Make array elements to set establish session type for a pair of
+# modes, the form response mode and the form's submit response mode.
+#
+# Called by get_combined_establish_session_array()
+make_single_establish_session_array()
+{
+    local mode_root="$1"
+    local mode_submit="${mode_root}_submit"
+
+    local label_suffix="mfspa_${mode_root}"
+
+    local label_root_established="ROOT_ESTABLISHED_${label_suffix}"
+    local label_submit_established="SUBMIT_ESTABLISHED_${label_suffix}"
+
+    echo goto
+    echo "$label_root_established"
+    echo "${mode_root}/session-type"
+    echo --
+
+    echo before-sibling
+    echo "${mode_root}/type"
+    echo "session-type:establish"
+    echo --
+
+    echo label
+    echo "$label_root_established"
+    echo --
+
+    # End of establishing the root
+
+    echo goto
+    echo "$label_submit_established"
+    echo "${mode_submit}/session-type"
+    echo --
+
+    echo before-sibling
+    echo "${mode_submit}/type"
+    echo "session-type:establish"
+    echo --
+
+    echo label
+    echo "$label_submit_established"
+    echo --
+}
+
+get_combined_establish_session_array()
+{
+    local -a modes=( login register )
+    for mode in "${modes[@]}"; do
+        make_single_establish_session_array "$mode"
+    done
+}
+
+# Make individual drop salt action array.
+# Called by get_combined_drop_salt_array()l
+make_single_drop_salt_array()
+{
+    local mode="$1"
+    local label="DONE_mdsa_${mode}"
+
+    echo goto
+    echo "$label"
+    echo "$mode/drop-salt"
+    echo --
+
+    echo after-sibling
+    echo "$mode/procedure"
+    echo "drop-salt"
+    echo --
+
+    echo label
+    echo "$label"
+    echo --
+
+}
+
+# Collect all necessary drop-salt action arrays
+# The drop-salt instruction must be added to any submitting
+# form that will generate a new password
+get_combined_drop_salt_array()
+{
+    local -a modes=(
+        register_submit
+        password_change_submit
+        create_password_code_view
+    )
+
+    for mode in "${modes[@]}"; do
+        make_single_drop_salt_array "$mode"
+    done
+}
+
+make_single_add_button_array()
+{
+    local url="$1"
+    local label="$2"
+    local mode="$3"
+
+    echo before-sibling
+    echo "${mode}/schema/field"
+    echo "button:new"
+    echo --
+
+    echo last-child
+    echo "${mode}/schema/button:new"
+    echo "type:jump"
+    echo "label:${label}"
+    echo "url:${url}"
+    echo --
+
+    echo set-line
+    echo "${mode}/schema/button:new"
+    echo "<%SET_VALUE>"
+    echo " "
+    echo --
+
+}
+
+get_combined_add_button_array()
+{
+    make_single_add_button_array "?login" "Login with Existing User" "register"
+    make_single_add_button_array "?register" "Register a New User" "login"
+}
+
+
+make_single_login_page_settings_array()
+{
+    mode="$1"
+    label="DONE_mslpa_${mode}"
+
+    echo goto
+    echo "$label"
+    echo "$mode/type:form-page"
+    echo --
+
+    echo set-line
+    echo "$mode/type"
+    echo "<%SET_VALUE>"
+    echo "form-page"
+    echo --
+
+    echo set-line
+    echo "$mode/autoload_tag"
+    echo "<%SET_VALUE>"
+    echo "lpage"
+    echo --
+
+    echo label
+    echo "$label"
+    echo --
+}
+
+get_combined_login_page_settings_array()
+{
+    make_single_login_page_settings_array "login"
+    make_single_login_page_settings_array "register"
+}
+
+
+make_single_title_setting_array()
+{
+    mode="$1"
+    title="$2"
+
+    echo after-sibling
+    echo "${mode}/type"
+    echo "title:$title"
+    echo --
+}
+
+get_combined_title_settings_array()
+{
+    local mode title
+    for element in "${PAGE_TITLES[@]}"; do
+        if [ -n "$mode" ]; then
+            title="$element"
+            echo "Set title to '$title', mode is '$mode'" >&2
+            make_single_title_setting_array "$mode" "$title"
+            mode=
+            title=
+        else
+            mode="$element"
+        fi
+    done
+}
+
+
+warn_about_missing_titles()
+{
+    local OIFS="${IFS}"
+    local IFS=$'\n'
+    local -a cmd=(
+
+        # First tag modes that are suspiciously missing titles:
+        label
+           LOOP_TAG
+           --
+
+        # Skip to next loop if no more to processx
+        goto-if-not
+           LOOP_UNTAG
+           "*[autoload_tag][!title][!title_flag]"
+           --
+
+        # Add flag-line to each suspicious mode
+        last-child
+           "*[autoload_tag][!title][!title_flag]"
+           title_flag
+           --
+
+        goto
+           LOOP_TAG
+           --
+
+         # Remove tags while listing nodes
+
+         label LOOP_UNTAG --
+
+         goto-if-not
+            DONE
+            "*[autoload_tag][!title][title_flag]"
+            --
+
+         message
+            "<%show:*[autoload_tag][!title][title_flag]>"
+            --
+
+         delete
+            "*[autoload_tag][!title][title_flag]/title_flag"
+            --
+
+         goto
+            LOOP_UNTAG
+            --
+
+         label
+            DONE
+            --
+        )
+
+    # readarray -t list <<< "${ostr}"
+    list=( $( "$GENSFW_SRM" "$TARGET" "${cmd[@]}" ) )
+    IFS="$OIFS"
+    if [ "${#list[@]}" -gt 0 ]; then
+        echo "The following ${#list[@]} response mode(s) is/are missing title(s):" >&2
+        printf "'%s'\n" "${list[@]}" >&2
+    fi
+}
+
+
+### Using the Update Arrays By Category:
+
+
+add_password_field_types()
+{
+    local -a cmd=(
+        $( get_combined_password_field_type_array )
+        write_file "$TARGET" --
+    )
+    "$GENSFW_SRM" "$TARGET" "${cmd[@]}"
+}
+
+add_establish_session_types()
+{
+    local -a cmd=(
+        $( get_combined_establish_session_array )
+        write_file "$TARGET" --
+    )
+
+    "$GENSFW_SRM" "$TARGET" "${cmd[@]}"
+}
+
+add_drop_salt_instructions()
+{
+    local -a cmd=(
+        $( get_combined_drop_salt_array )
+        write_file "$TARGET" --
+    )
+
+    "$GENSFW_SRM" "$TARGET" "${cmd[@]}"
+}
+
+prepare_login_and_register_modes()
+{
+    local IFS=$'\n'
+    local -a cmd=(
+        $( get_combined_add_button_array )
+        $( get_combined_login_page_settings_array )
+        write_file "$TARGET" --
+    )
+
+    "$GENSFW_SRM" "$TARGET" "${cmd[@]}"
+}
+
+# Make huge array and make all changes in one go:
+execute_all_script_updates()
+{
+    local IFS=$'\n'
+    local -a cmd=(
+        $( get_combined_password_field_type_array )
+        $( get_combined_establish_session_array )
+        $( get_combined_drop_salt_array )
+        $( get_combined_login_page_settings_array )
+        $( get_combined_title_settings_array )
+        write_file "$TARGET" --
+    )
+
+    "$GENSFW_SRM" "$TARGET" "${cmd[@]}"
+}
+
+
+generate_login_srm_file_from_script "sql/zz_procs.sql"
+
+# add_password_field_types
+# add_establish_session_types
+# add_drop_salt_instructions
+# prepare_login_and_register_modes
+
+execute_all_script_updates
+warn_about_missing_titles
